@@ -1,0 +1,6 @@
+.godot/
+.env
+agent/
+shots/
+*.tmp
+/android/
