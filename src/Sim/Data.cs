@@ -171,7 +171,7 @@ public static class Data
         new("gnawer", "Gnawer", "body-gnawer", 0.75, Ai.Melee, 4.0, 8, 1, 2, Elem.Phys, 1.0, 0.9, 6, 1, 4, 3, 5, Radius: 0.35, Quad: true, Clip: "bite"),
         new("hollow", "Hollow", "body-hollow", 1.75, Ai.Melee, 1.5, 22, 2, 4, Elem.Phys, 1.2, 1.3, 10, 1, 5, 3, 5, Clip: "punch"),
         new("sentry", "Bone Sentry", "body-bone-sentry", 1.8, Ai.Melee, 2.6, 18, 1, 4, Elem.Phys, 1.4, 1.0, 12, 1, 6, 3, 5, Right: "sword", Left: "shield", Armour: 12),
-        new("archer", "Grave Archer", "body-archer", 1.8, Ai.Ranged, 2.6, 14, 1, 4, Elem.Phys, 9, 1.4, 12, 2, 7, 2, 4, Left: "bow", Clip: "point", Missile: "arrow"),
+        new("archer", "Grave Archer", "body-archer", 1.8, Ai.Ranged, 2.6, 14, 1, 4, Elem.Phys, 9, 1.4, 12, 2, 7, 2, 4, Right: "bow", Clip: "shoot", Missile: "arrow"),
         new("ghoul", "Barrow Ghoul", "body-ghoul", 1.6, Ai.Melee, 3.4, 26, 3, 7, Elem.Phys, 1.3, 0.9, 16, 2, 8, 2, 4, Clip: "punch"),
         new("hag", "Bog Hag", "body-bog-hag", 1.5, Ai.Caster, 2.0, 24, 3, 7, Elem.Cold, 8, 1.8, 20, 2, 6, 1, 2, Clip: "point", Missile: "frost", Resist: 30),
         new("shade", "Wailing Shade", "body-shade", 1.9, Ai.Caster, 3.0, 20, 4, 8, Elem.Cold, 8, 1.6, 20, 4, 9, 2, 4, Clip: "point", Missile: "frost", Resist: 50),
@@ -224,7 +224,7 @@ public static class Data
     {
         new("short-sword", "Short Sword", Kind.Sword, 1, 2, 7, 1.0, Held: "sword", Price: 30),
         new("long-sword", "Long Sword", Kind.Sword, 7, 5, 14, 1.0, Held: "sword", Price: 120),
-        new("bastard-sword", "Bastard Sword", Kind.Sword, 14, 10, 24, 1.1, Held: "sword", Price: 400),
+        new("bastard-sword", "Bastard Sword", Kind.Sword, 14, 10, 24, 1.1, Held: "bastard-sword", Price: 400),
         new("hatchet", "Hatchet", Kind.Axe, 1, 3, 6, 0.95, Held: "axe", Price: 25),
         new("war-axe", "War Axe", Kind.Axe, 9, 7, 17, 1.05, Held: "axe", Price: 200),
         new("spiked-club", "Spiked Club", Kind.Club, 4, 4, 10, 1.1, Held: "club", Price: 70),

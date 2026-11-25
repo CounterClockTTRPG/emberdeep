@@ -29,6 +29,7 @@ public partial class World3D : Node3D
     private readonly Dictionary<int, Node3D> _props = new();
     private readonly List<Fx> _fx = new();
     private Node3D _portal, _shield, _target;
+    private bool _heroHidden;
     private Vector3 _camAt;
     private float _shake;
     private double _clock;
@@ -109,6 +110,7 @@ public partial class World3D : Node3D
         foreach (Figure3D fig in _figs.Values) fig.QueueFree();
         _figs.Clear();
         _last.Clear();
+        _heroHidden = false;
         foreach (Node3D n in _drops.Values.Concat(_missiles.Values).Concat(_zones.Values)) n.QueueFree();
         _drops.Clear(); _missiles.Clear(); _zones.Clear(); _props.Clear();
         foreach (Fx fx in _fx) fx.Node.QueueFree();
@@ -384,7 +386,7 @@ public partial class World3D : Node3D
         if (!a.Hero && !a.Npc)
         {
             MonDef m = a.M;
-            fig.Hold(m.Right, m.Left == "bow" ? "bow" : null, m.Left == "shield" ? "shield" : null);
+            fig.Hold(m.Right, null, m.Left == "shield" ? "shield" : null);
             if (a.Champion) fig.Tint(new Color(1.35f, 0.75f, 0.65f));
             else if (a.Title != null && m.Ai != Ai.Boss) fig.Tint(new Color(1.2f, 1.05f, 0.7f));
         }
@@ -420,12 +422,21 @@ public partial class World3D : Node3D
         if (!fig.Visible) return;
         if (a.Hero)
         {
-            Item w = Game.Hero.Weapon;
-            string held = w?.B.Held;
-            fig.Hold(held is "bow" ? null : held, held == "bow" ? "bow" : null, Game.Hero.Equip[(int)Slot.Shield] != null ? "shield" : null);
-            fig.Tint(Colors.White, a.Hidden > 0 ? 0.35f : 1);
+            Dress(fig, Game.Hero);
+            // Smoke-faded while hidden: tinted only when that changes (not every frame).
+            if ((a.Hidden > 0) != _heroHidden) { _heroHidden = a.Hidden > 0; fig.Tint(Colors.White, _heroHidden ? 0.35f : 1); }
         }
         Animate(a, fig);
+    }
+
+    /// <summary>
+    /// The hero's figure as equipped: the weapon in the right hand (a bow too: the shooting clip holds the right arm
+    /// out, the left hand at its wrist), the shield on the left forearm. The title shows the hero the same way.
+    /// </summary>
+    public static void Dress(Figure3D fig, Hero h)
+    {
+        string held = h.Weapon?.B.Held;
+        fig.Hold(held, null, h.Equip[(int)Slot.Shield] != null ? "shield" : null);
     }
 
     private void Animate(Actor a, Figure3D fig)
@@ -457,13 +468,17 @@ public partial class World3D : Node3D
             case "attack" or "cast" or "leap":
             {
                 string clip = ClipFor(a);
-                fig.Play(clip, Speed(fig, clip, a.ActDur), fresh, "slash", "punch");
+                fig.Play(clip, Speed(fig, clip, a.ActDur), fresh, clip == "shoot" ? "point" : "slash", "punch");
                 return;
             }
             default:
                 if (a.Npc) fig.Play(a.Def == "smith" ? "hammer" : a.Def == "elder" ? "idle" : "idle");
-                else if (a.Hero) fig.Play(Game.Hero.Weapon != null && !Game.Hero.S.Ranged && Game.Foes.Any(f => f.Alive && f.Awake && Game.Dist(f, a) < 6) ? "ready" : "idle");
-                else fig.Play(a.Awake ? "ready" : "idle", 1, false, "idle");
+                else if (a.Hero)
+                {
+                    bool fight = Game.Foes.Any(f => f.Alive && f.Awake && Game.Dist(f, a) < (Game.Hero.S.Ranged ? 12 : 6));
+                    fig.Play(!fight || Game.Hero.Weapon == null ? "idle" : Game.Hero.S.Ranged ? "aim" : "ready", 1, false, "idle");
+                }
+                else fig.Play(a.Awake ? (a.M?.Clip == "shoot" ? "aim" : "ready") : "idle", 1, false, "idle");
                 return;
         }
     }
@@ -488,8 +503,8 @@ public partial class World3D : Node3D
                 "cleave" => "slash",
                 "bash" => "overhead",
                 "firebolt" or "chain" => "point",
-                "power" or "multi" or "flurry" or "rain" => "point",
-                _ => ranged ? "point" : (a.Id + (int)(Game.Time / 0.9)) % 2 == 0 ? "slash" : "overhead",
+                "power" or "multi" or "flurry" or "rain" => "shoot",
+                _ => ranged ? "shoot" : (a.Id + (int)(Game.Time / 0.9)) % 2 == 0 ? "slash" : "overhead",
             };
         }
         MonDef m = a.M;
@@ -498,29 +513,74 @@ public partial class World3D : Node3D
         return m.Ai == Ai.Boss ? (a.ActT < 0.05 && (int)(Game.Time) % 2 == 0 ? "smash" : "overhead") : m.Clip;
     }
 
+    /// <summary>Drops that have just fallen (from a monster, a chest), by id: when, so they tumble down.</summary>
+    private readonly Dictionary<int, double> _falling = new();
+
     private void Drops()
     {
         var live = new HashSet<int>(Game.Here.Drops.Select(d => d.Id));
-        foreach (int id in _drops.Keys.Where(id => !live.Contains(id)).ToList()) { _drops[id].QueueFree(); _drops.Remove(id); }
+        foreach (int id in _drops.Keys.Where(id => !live.Contains(id)).ToList()) { _drops[id].QueueFree(); _drops.Remove(id); _falling.Remove(id); }
         foreach (Drop d in Game.Here.Drops)
         {
-            if (_drops.ContainsKey(d.Id)) continue;
-            var node = new Node3D { Position = At(d.X, d.Y) };
-            var icon = new Sprite3D
+            if (!_drops.TryGetValue(d.Id, out Node3D node))
             {
-                Texture = Kit.Icon(d.Item.B?.Icon), PixelSize = 0.0042f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                Position = new Vector3(0, 0.3f, 0), Shaded = false, AlphaCut = SpriteBase3D.AlphaCutMode.Disabled,
-            };
-            node.AddChild(icon);
-            var label = new Label3D
+                node = new Node3D { Position = At(d.X, d.Y) };
+                Node3D body = DropBody(d.Item);
+                body.Name = "Body";
+                body.Rotation = new Vector3(0, Hash(d.Id, 7) * Mathf.Tau, 0);
+                node.AddChild(body);
+                var label = new Label3D
+                {
+                    Text = d.Item.Base == "gold" ? $"{d.Item.Count} gold" : d.Item.Title, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                    NoDepthTest = true, FontSize = 28, PixelSize = 0.006f, OutlineSize = 8, Modulate = RarityColour(d.Item), Position = new Vector3(0, 0.6f, 0),
+                };
+                node.AddChild(label);
+                _dyn.AddChild(node);
+                _drops[d.Id] = node;
+            }
+            if (_falling.TryGetValue(d.Id, out double born))
             {
-                Text = d.Item.Base == "gold" ? $"{d.Item.Count} gold" : d.Item.Title, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-                NoDepthTest = true, FontSize = 30, PixelSize = 0.006f, OutlineSize = 8, Modulate = RarityColour(d.Item), Position = new Vector3(0, 0.85f, 0),
-            };
-            node.AddChild(label);
-            _dyn.AddChild(node);
-            _drops[d.Id] = node;
+                // Thrown up out of the body and tumbling down onto the floor, about half a second.
+                float t = (float)(_clock - born);
+                var body = node.GetNode<Node3D>("Body");
+                const float land = 0.486f;
+                if (t >= land) { _falling.Remove(d.Id); body.Position = Vector3.Zero; body.Rotation = new Vector3(0, body.Rotation.Y, 0); continue; }
+                body.Position = new Vector3(0, Mathf.Max(0, 0.8f + 2f * t - 7.5f * t * t), 0);
+                body.Rotation = new Vector3((1 - t / land) * Mathf.Tau * 1.25f, body.Rotation.Y, 0);
+            }
         }
+    }
+
+    /// <summary>
+    /// What an item looks like on the floor: its own floor model (assets/models/drop-BASE) if there is one, else the
+    /// model a hero holds it as (a sword, a bow, a shield) lying flat, else its icon cut out of its background and laid
+    /// on the floor, sized as the thing would be.
+    /// </summary>
+    public static Node3D DropBody(Item it)
+    {
+        Base b = it.B;
+        Node3D m = Kit.Lying("drop-" + it.Base, "models");
+        if (m == null && b?.Held != null) m = Kit.Lying("held-" + b.Held, "figures", 1.1f);
+        if (m != null) return m;
+        float size = b?.Kind switch
+        {
+            Kind.Body => 0.75f,
+            Kind.Head or Kind.Hands or Kind.Feet => 0.5f,
+            Kind.Ring => 0.28f,
+            Kind.Amulet or Kind.PotLife or Kind.PotMana => 0.36f,
+            Kind.Gem => 0.25f,
+            Kind.Gold => it.Count > 100 ? 0.6f : 0.45f,
+            _ => 0.45f,
+        };
+        var holder = new Node3D();
+        Texture2D t = Kit.Cutout(b?.Icon);
+        if (t != null)
+            holder.AddChild(new Sprite3D
+            {
+                Texture = t, Axis = Vector3.Axis.Y, PixelSize = size / t.GetWidth(), Shaded = true, DoubleSided = false,
+                AlphaCut = SpriteBase3D.AlphaCutMode.Disabled, Position = new Vector3(0, 0.02f, 0), TextureFilter = BaseMaterial3D.TextureFilterEnum.LinearWithMipmaps,
+            });
+        return holder;
     }
 
     public static Color RarityColour(Item it) => it.Base == "gold" ? new Color(0.95f, 0.8f, 0.35f) : it.Rarity switch
@@ -724,6 +784,9 @@ public partial class World3D : Node3D
             case "chest":
                 if (_props.TryGetValue(e.A, out Node3D chest)) Opened(chest);
                 break;
+            case "drop":
+                _falling[e.A] = _clock;
+                break;
             case "boss":
                 _shake = 1;
                 break;
@@ -796,10 +859,10 @@ public partial class World3D : Node3D
         foreach (Drop d in Game.Here.Drops.OrderBy(d => Game.Dist(d.X, d.Y, Game.Me.X, Game.Me.Y)))
         {
             if (Game.Dist(d.X, d.Y, Game.Me.X, Game.Me.Y) > 25) continue;
-            Vector2 label = ScreenOf(d.X, d.Y, 0.85f), icon = ScreenOf(d.X, d.Y, 0.3f);
+            Vector2 label = ScreenOf(d.X, d.Y, 0.6f), icon = ScreenOf(d.X, d.Y, 0.05f);
             float w = Math.Max(40, (d.Item.Base == "gold" ? 9 : d.Item.Title.Length) * 5.2f);
             if (Math.Abs(p.X - label.X) < w && Math.Abs(p.Y - label.Y) < 11) return d;
-            if (p.DistanceTo(icon) < 16) return d;
+            if (p.DistanceTo(icon) < 22) return d;
         }
         return null;
     }

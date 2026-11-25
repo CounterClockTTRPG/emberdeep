@@ -10,16 +10,26 @@ namespace Emberdeep;
 /// </summary>
 public static class UITheme
 {
-    public static readonly Color Text = new(0.92f, 0.93f, 0.95f);
-    public static readonly Color Dim = new(0.62f, 0.65f, 0.7f);
-    public static readonly Color Faint = new(0.4f, 0.43f, 0.48f);
-    public static readonly Color Accent = new(0.95f, 0.72f, 0.3f);
-    public static readonly Color Good = new(0.5f, 0.85f, 0.55f);
-    public static readonly Color Bad = new(0.95f, 0.4f, 0.38f);
-    public static readonly Color PanelFill = new(0.09f, 0.1f, 0.12f, 0.95f);
-    public static readonly Color PanelFill2 = new(0.13f, 0.14f, 0.17f, 0.97f);
-    public static readonly Color Edge = new(0.25f, 0.28f, 0.33f);
-    public static readonly Color EdgeLit = new(0.55f, 0.6f, 0.68f);
+    // Emberdeep's palette: soot and char for ground, bone for text, ash for the quiet parts, rust for edges, ember for
+    // what matters now, crimson for loss.
+    public static readonly Color Soot = Color.FromHtml("#15110f");
+    public static readonly Color Char = Color.FromHtml("#241c18");
+    public static readonly Color Bone = Color.FromHtml("#e6dccb");
+    public static readonly Color Ash = Color.FromHtml("#8a8178");
+    public static readonly Color Rust = Color.FromHtml("#7a3b22");
+    public static readonly Color Ember = Color.FromHtml("#ff8a3d");
+    public static readonly Color Crimson = Color.FromHtml("#8e2a1f");
+
+    public static readonly Color Text = Bone;
+    public static readonly Color Dim = Ash;
+    public static readonly Color Faint = Color.FromHtml("#5a524b");
+    public static readonly Color Accent = Ember;
+    public static readonly Color Good = Color.FromHtml("#9cb86f");
+    public static readonly Color Bad = Color.FromHtml("#d0533f");
+    public static readonly Color PanelFill = new(Soot.R, Soot.G, Soot.B, 0.95f);
+    public static readonly Color PanelFill2 = new(Char.R, Char.G, Char.B, 0.97f);
+    public static readonly Color Edge = Color.FromHtml("#4a3226");
+    public static readonly Color EdgeLit = Rust.Lightened(0.25f);
 
     private static Font _title, _body, _mono;
     private static Theme _theme;
@@ -99,6 +109,22 @@ public static class UITheme
     {
         var b = new Button { Text = text, TooltipText = tip ?? "", FocusMode = Control.FocusModeEnum.None };
         b.AddThemeFontSizeOverride("font_size", size);
+        b.Pressed += () => { Sounds.Play("click"); onPress(); };
+        return b;
+    }
+
+    /// <summary>A button that is only its words: bone, ember when hovered or focused (the title's actions).</summary>
+    public static Button Flat(string text, Action onPress, int size = 20, Color? color = null, Font font = null)
+    {
+        var b = new Button { Text = text, Flat = true, FocusMode = Control.FocusModeEnum.All, Alignment = HorizontalAlignment.Left };
+        b.AddThemeFontSizeOverride("font_size", size);
+        if (font != null) b.AddThemeFontOverride("font", font);
+        b.AddThemeColorOverride("font_color", color ?? Text);
+        b.AddThemeColorOverride("font_hover_color", Ember);
+        b.AddThemeColorOverride("font_focus_color", Ember);
+        b.AddThemeColorOverride("font_pressed_color", Ember.Lightened(0.2f));
+        var none = new StyleBoxEmpty { ContentMarginLeft = 0, ContentMarginRight = 0, ContentMarginTop = 2, ContentMarginBottom = 2 };
+        foreach (string st in new[] { "normal", "hover", "pressed", "focus", "disabled", "hover_pressed" }) b.AddThemeStyleboxOverride(st, none);
         b.Pressed += () => { Sounds.Play("click"); onPress(); };
         return b;
     }

@@ -8,6 +8,7 @@ Sources (ASSETGEN_LIBRARY, default ../assetgen/library):
   emberdeep/assets/body-*, held-*   -> assets/figures/<name>.glb     rigged bodies (humanoid or quadruped template),
                                                                      things held in their sockets
   emberdeep/assets/prop-*           -> assets/models/<name>.glb      props
+  emberdeep/assets/drop-*, loot-*   -> assets/models/drop-<base>.glb an item lying on the floor (drop-pot-hp, drop-gold)
   emberdeep/assets/icon-*           -> assets/icons/<name>.png       item and skill icons, 128 px (with ffmpeg)
   blender-test/assets/<clip>        -> assets/figures/clip-*.glb     humanoid clips (on the shared template),
   hammerdeep/assets/<clip>                                           and four of hammerdeep's (chop, hammer, pray, smash)
@@ -34,6 +35,8 @@ CLIPS = {
     "hit": "humanoid hit react", "death": "humanoid death", "point": "humanoid point", "cheer": "humanoid cheer",
     "block": "humanoid block", "jump": "humanoid jump", "pickup": "humanoid pick up", "wave": "humanoid wave",
     "search": "humanoid search", "crouch": "humanoid crouch",
+    # Made for a pistol: the right arm out, the left hand at the wrist, a kick on the shot -- a bow held out and loosed.
+    "aim": "humanoid pistol aim", "shoot": "humanoid pistol shoot",
 }
 # Clips from hammerdeep's library (same humanoid template): a two-handed chop, a smith's hammering, kneeling prayer,
 # a two-handed overhead blow (made for digging; a brute's or a golem's smash here).
@@ -70,6 +73,9 @@ def main():
             plan["figures"].append(("body-" + name[6:] if name.startswith("beast-") else name, a["id"], src))
         elif name.startswith("prop-"):
             plan["models"].append((name[5:], a["id"], latest(d, "glb")))
+        elif name.startswith(("drop-", "loot-")):
+            # An item lying on the floor (drop-pot-hp, drop-gold...): the game shows it instead of the cut-out icon.
+            plan["models"].append(("drop-" + name[5:], a["id"], latest(d, "glb")))
         elif name.startswith("icon-"):
             plan["icons"].append((name[5:], a["id"], latest(d, "png")))
     by_name = {a["name"]: (d, a) for d, a in assets_of("blender-test")}

@@ -60,6 +60,101 @@ public static class Kit
         return _icons[name] = t;
     }
 
+    private static readonly Dictionary<string, Texture2D> _cutouts = new();
+
+    /// <summary>
+    /// An icon with its dark background taken away (a flood from the edges through dark pixels, so dark parts inside
+    /// the object stay), for an item lying on the floor. Null when there is no icon.
+    /// </summary>
+    public static Texture2D Cutout(string name)
+    {
+        if (name == null) return null;
+        if (_cutouts.TryGetValue(name, out Texture2D t)) return t;
+        string path = $"{DirOf("icons")}/{name}.png";
+        var img = new Image();
+        if (!FileAccess.FileExists(path) || img.LoadPngFromBuffer(FileAccess.GetFileAsBytes(path)) != Error.Ok) return _cutouts[name] = null;
+        img.Convert(Image.Format.Rgba8);
+        int w = img.GetWidth(), h = img.GetHeight();
+        var lum = new float[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) { Color c = img.GetPixel(x, y); lum[y * w + x] = c.R * 0.3f + c.G * 0.55f + c.B * 0.15f; }
+        // 1. The background: dark pixels reached from the edges.
+        var gone = new bool[w * h];
+        var queue = new Queue<int>();
+        for (int x = 0; x < w; x++) { queue.Enqueue(x); queue.Enqueue((h - 1) * w + x); }
+        for (int y = 0; y < h; y++) { queue.Enqueue(y * w); queue.Enqueue(y * w + w - 1); }
+        while (queue.Count > 0)
+        {
+            int i = queue.Dequeue(), x = i % w, y = i / w;
+            if (gone[i] || lum[i] > 0.12f) continue;
+            gone[i] = true;
+            if (x > 0) queue.Enqueue(i - 1);
+            if (x < w - 1) queue.Enqueue(i + 1);
+            if (y > 0) queue.Enqueue(i - w);
+            if (y < h - 1) queue.Enqueue(i + w);
+        }
+        // 2. Specks: what is left in small islands (glints, sparks, bits of a vignette) goes too.
+        var island = new int[w * h];
+        var sizes = new List<int> { 0 };
+        for (int i = 0; i < w * h; i++)
+        {
+            if (gone[i] || island[i] != 0) continue;
+            int id = sizes.Count, n = 0;
+            sizes.Add(0);
+            queue.Enqueue(i);
+            island[i] = id;
+            while (queue.Count > 0)
+            {
+                int j = queue.Dequeue(), x = j % w, y = j / w;
+                n++;
+                foreach (int k in new[] { x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, y > 0 ? j - w : -1, y < h - 1 ? j + w : -1 })
+                    if (k >= 0 && !gone[k] && island[k] == 0) { island[k] = id; queue.Enqueue(k); }
+            }
+            sizes[id] = n;
+        }
+        int biggest = sizes.Max();
+        for (int i = 0; i < w * h; i++) if (!gone[i] && sizes[island[i]] < Math.Max(40, biggest / 25)) gone[i] = true;
+        // 3. Alpha: none for the background, a soft edge where the object meets it, darker edge pixels fading more.
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = y * w + x;
+                Color c = img.GetPixel(x, y);
+                if (gone[i]) { img.SetPixel(x, y, new Color(c.R, c.G, c.B, 0)); continue; }
+                bool edge = x > 0 && gone[i - 1] || x < w - 1 && gone[i + 1] || y > 0 && gone[i - w] || y < h - 1 && gone[i + w];
+                if (edge) img.SetPixel(x, y, new Color(c.R, c.G, c.B, Mathf.Clamp((lum[i] - 0.08f) * 5, 0.25f, 0.8f)));
+            }
+        img.GenerateMipmaps();
+        return _cutouts[name] = ImageTexture.CreateFromImage(img);
+    }
+
+    /// <summary>
+    /// A model lying on the floor as an item does: turned so its smallest side is up (a sword flat, a shield on its
+    /// back), stood on the ground, centred. Null when there is no such model.
+    /// </summary>
+    public static Node3D Lying(string name, string folder, float scale = 1)
+    {
+        Node3D m = Part(name, folder);
+        if (m == null) return null;
+        var holder = new Node3D { Name = name };
+        var turn = new Node3D();
+        holder.AddChild(turn);
+        turn.AddChild(m);
+        Basis best = Basis.Identity;
+        float low = float.MaxValue;
+        foreach (Basis b in new[] { Basis.Identity, new Basis(Vector3.Right, Mathf.Pi / 2), new Basis(Vector3.Back, Mathf.Pi / 2) })
+        {
+            turn.Basis = b;
+            float hgt = Bounds(holder).Size.Y;
+            if (hgt < low - 1e-4f) { low = hgt; best = b; }
+        }
+        turn.Basis = best.Scaled(Vector3.One * scale);
+        Aabb box = Bounds(holder);
+        Vector3 c = box.GetCenter();
+        turn.Position = new Vector3(-c.X, -box.Position.Y + 0.01f, -c.Z);
+        return holder;
+    }
+
     /// <summary>The clip names in a manifest, for a prefix (clip- or qclip-).</summary>
     private static List<string> ClipNames(string prefix)
     {
@@ -69,7 +164,7 @@ public static class Kit
             .Where(n => n.StartsWith(prefix)).Select(n => n[prefix.Length..]).ToList();
     }
 
-    public static readonly HashSet<string> Looping = new() { "idle", "walk", "run", "ready", "search", "hammer", "pray" };
+    public static readonly HashSet<string> Looping = new() { "idle", "walk", "run", "ready", "search", "hammer", "pray", "aim" };
 
     /// <summary>Every clip fitted to one body (they differ in height and rest pose), aimed at its skeleton under "Body".</summary>
     public static AnimationLibrary Clips(string body, Skeleton3D ours, string skelPath, bool quad)

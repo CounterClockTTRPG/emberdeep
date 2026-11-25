@@ -40,5 +40,28 @@ public partial class SelfCheck
             Check(Kit.Has(prop, "models"), $"the {prop} model");
         foreach (string held in Data.Bases.Where(b => b.Held != null).Select(b => b.Held).Distinct())
             Check(Kit.Has("held-" + held), $"the held {held}");
+        // On the floor: weapons and shields as their models lying flat, the rest as icons with the background cut away.
+        foreach (Base b in Data.Bases)
+        {
+            Node3D body = World3D.DropBody(new Item(b.Id));
+            AddChild(body);
+            Aabb box = Kit.Bounds(body);
+            if (b.Held != null) Check(box.Size.Y < 0.5f && box.Size.Y > 0.005f && box.Position.Y > -0.02f, $"a dropped {b.Id} lies flat on the floor ({box.Size.Y:0.00} m high)");
+            else
+            {
+                Texture2D t = Kit.Cutout(b.Icon);
+                Image img = t?.GetImage();
+                int edge = 0, clear = 0;
+                if (img != null)
+                    for (int k = 0; k < img.GetWidth(); k += 2)
+                        foreach (Vector2I p in new[] { new Vector2I(k, 0), new Vector2I(k, img.GetHeight() - 1), new Vector2I(0, k), new Vector2I(img.GetWidth() - 1, k) })
+                        { edge++; if (img.GetPixelv(p).A < 0.05f) clear++; }
+                Check(edge > 0 && clear > edge * 0.6, $"the {b.Id} icon's background is cut away ({clear} of {edge} edge samples)");
+                int kept = 0;
+                if (img != null) for (int y = 0; y < img.GetHeight(); y += 4) for (int x = 0; x < img.GetWidth(); x += 4) if (img.GetPixel(x, y).A > 0.5f) kept++;
+                Check(kept > 60, $"and the {b.Id} itself is kept ({kept} of 1024 samples)");
+            }
+            body.Free();
+        }
     }
 }

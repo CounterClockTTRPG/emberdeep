@@ -53,10 +53,19 @@ public partial class ShotRunner : Node
         try
         {
             GD.Print("walkthrough:");
+            // The title with a hero in slot 1 (a scratch slot): a rogue with a long bow, part-way down.
+            Game saved = Game.New(42, Cls.Rogue);
+            saved.Hero.Level = 9;
+            saved.Hero.Wear(new Item("long-bow"));
+            saved.Hero.Wear(new Item("leather-armour"));
+            saved.Enter(5, null);
+            Profile.SaveGame(saved, 1);
+            Profile.Current.LastSlot = 1;
             Root.Instance.ShowTitle();
+            await Frames(60);
             await Shot("title");
-            ((TitleScreen)Root.Instance.Current).Choosing = 1;
-            Root.Instance.Show(new TitleScreen { Choosing = 1 });
+            Root.Instance.Show(new TitleScreen { Choosing = 2 });
+            await Frames(60);
             await Shot("classes");
 
             // The village: the elder's quest, the smith's wares.
