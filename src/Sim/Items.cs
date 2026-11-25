@@ -23,6 +23,9 @@ public sealed class Item
     public string Name;
     public List<Mod> Mods = new();
     public int Count = 1;
+    /// <summary>A treasure map: which lair it opens (Data.Lairs), and the seed its lair is made from.</summary>
+    public int Lair = -1;
+    public ulong MapSeed;
 
     public Item() { }
     public Item(string baseId, int count = 1) { Base = baseId; Count = count; Name = Data.BaseOf(baseId)?.Name ?? baseId; }
@@ -71,6 +74,12 @@ public sealed class Item
         if (b.Kind == Kind.PotLife) yield return $"Restores {Data.PotionHeal} life";
         if (b.Kind == Kind.PotMana) yield return $"Restores {Data.PotionHeal} mana";
         if (b.Kind == Kind.Scroll) yield return "Opens a way back to Emberwick";
+        if (b.Kind == Kind.Map && Lair >= 0)
+        {
+            yield return Data.Lairs[Lair].Map;
+            yield return $"Opens a portal to {Data.Lairs[Lair].Name}: monster level {Level}";
+            yield return "One way in, one way out: it closes behind you";
+        }
         foreach (Mod m in Mods) yield return Data.Describe(m.Stat, m.Value);
         if (b.Wearable && Requires > 1) yield return $"Requires level {Requires}";
     }
@@ -117,6 +126,13 @@ public static class Loot
         return it;
     }
 
+    /// <summary>A treasure map to a lair (a kind from the RNG unless given), for a level.</summary>
+    public static Item Map(int level, Rng r, int lair = -1)
+    {
+        int k = lair >= 0 ? lair : r.Int(0, Data.Lairs.Length);
+        return new Item("treasure-map") { Lair = k, Level = Math.Max(3, level), MapSeed = r.Next(), Name = $"Map to {Data.Lairs[k].Name}", Rarity = Rarity.Rare };
+    }
+
     /// <summary>A unique item from the table (its name, its base, its fixed affixes).</summary>
     public static Item Unique(int index)
     {
@@ -154,7 +170,10 @@ public static class Loot
     public static List<Item> Drop(int level, double quality, int magicFind, int goldFind, Rng r)
     {
         var got = new List<Item>();
-        int rolls = quality >= 6 ? 5 : quality >= 2 ? 2 : 1;
+        int rolls = quality >= 10 ? 7 : quality >= 6 ? 5 : quality >= 2 ? 2 : 1;
+        // A lair's boss always leaves a unique; named foes a treasure map half the time, champions now and then.
+        if (quality >= 10 && RollUnique(level, r) is Item u0) got.Add(u0);
+        if (quality >= 7 && r.Chance(0.5) || quality >= 2 && quality < 7 && r.Chance(0.03)) got.Add(Map(level + 2, r));
         for (int k = 0; k < rolls; k++)
         {
             double x = r.Float();

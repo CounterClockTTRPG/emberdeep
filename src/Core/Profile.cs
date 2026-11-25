@@ -19,6 +19,8 @@ public sealed class Profile
     public const int Slots = 3;
 
     public bool Fullscreen;
+    /// <summary>Numbers rising from blows; every drop's name shown (not only magic and better).</summary>
+    public bool DamageNumbers = true, AllNames;
     public bool Sound = true, MusicOn = true;
     public float Volume = 0.7f, MusicVolume = 0.5f;
     public int LastSlot = 1;

@@ -9,7 +9,7 @@ public enum Elem { Phys, Fire, Cold, Light }
 public enum Rarity { Plain, Magic, Rare, Unique }
 
 /// <summary>What an item is: decides where it can go and how it is used.</summary>
-public enum Kind { Sword, Axe, Club, Bow, Staff, Body, Head, Hands, Feet, Shield, Ring, Amulet, PotLife, PotMana, Scroll, Gem, Gold }
+public enum Kind { Sword, Axe, Club, Bow, Staff, Body, Head, Hands, Feet, Shield, Ring, Amulet, PotLife, PotMana, Scroll, Gem, Gold, Map }
 
 /// <summary>The equipment slots, in the order of <see cref="Hero.Equip"/>.</summary>
 public enum Slot { Weapon, Shield, Body, Head, Hands, Feet, Amulet, Ring1, Ring2 }
@@ -30,8 +30,11 @@ public sealed record Base(string Id, string Name, Kind Kind, int Level, int DMin
     public bool Ranged => Kind == Kind.Bow;
     public bool Wearable => Weapon || Kind is Kind.Body or Kind.Head or Kind.Hands or Kind.Feet or Kind.Shield or Kind.Ring or Kind.Amulet;
     public bool Stacks => Kind is Kind.PotLife or Kind.PotMana or Kind.Scroll or Kind.Gold;
-    /// <summary>The icon's file name (assets/icons).</summary>
-    public string Icon => Id;
+    /// <summary>The icon's file name (assets/icons); a treasure map borrows the scroll's until it has its own.</summary>
+    public string Icon => Id == "treasure-map" ? MapIcon ?? "scroll" : Id;
+
+    /// <summary>Set by the view when assets/icons/map.png exists.</summary>
+    public static string MapIcon;
 }
 
 /// <summary>A prefix or suffix: the stat it rolls, its range at the lowest and highest tier, where it can appear.</summary>
@@ -68,7 +71,32 @@ public static class Data
         new(10, "The Warden's Throne", "throne"),
     };
 
-    public static FloorDef Floor(int depth) => Floors[Math.Clamp(depth, 0, Bottom)];
+    public static FloorDef Floor(int depth) => depth >= LairBase && depth - LairBase < Lairs.Length
+        ? new FloorDef(depth, Lairs[depth - LairBase].Name, Lairs[depth - LairBase].Theme)
+        : Floors[Math.Clamp(depth, 0, Bottom)];
+
+    /// <summary>Lairs live at depths from here up (one a lair kind): the floors' tables keep them apart from the deep.</summary>
+    public const int LairBase = 100;
+
+    /// <summary>
+    /// A lair: a hard, rich place reached only by a treasure map's portal, its own floor, a boss at its heart (a
+    /// monster made far stronger and larger, with its own name) with sealed chests behind it, and the kinds that
+    /// infest it. One run each: it closes when the hero leaves it or dies in it.
+    /// </summary>
+    public sealed record LairDef(string Id, string Name, string Theme, string Boss, string BossTitle, double BossLife, double BossDmg,
+        double BossScale, string[] Roster, string Map);
+
+    public static readonly LairDef[] Lairs =
+    {
+        new("pit", "The Gnawing Pit", "barrow", "gnawer", "The Gnawer Queen", 60, 3.2, 2.6, new[] { "gnawer", "wolf", "ghoul" },
+            "a map scratched on hide: a pit under the barrow, and teeth"),
+        new("mire", "The Mire", "barrow", "hag", "Mother of the Mire", 16, 2.4, 1.5, new[] { "hag", "hollow", "ghoul", "boar" },
+            "a map drawn in mud and bone-ash, to a drowned grave"),
+        new("forge", "The Slag Tyrant's Forge", "ember", "golem", "The Slag Tyrant", 11, 2.0, 1.5, new[] { "imp", "hound", "golem", "brute" },
+            "a map burned into a scrap of leather, to a forge below the forges"),
+        new("crypt", "The Hollow King's Crypt", "catacomb", "lich", "Saelith the Hollow King", 12, 2.0, 1.0, new[] { "sentry", "archer", "shade", "knight" },
+            "a map on yellowed vellum, sealed with black wax and a crown"),
+    };
 
     // ---- classes ----------------------------------------------------------------------------------------------------
 
@@ -190,6 +218,10 @@ public static class Data
         new("brute", "Ironhide Brute", "body-brute", 2.4, Ai.Charger, 2.2, 70, 8, 16, Elem.Phys, 1.8, 1.6, 45, 5, 10, 1, 2, Right: "club", Clip: "overhead", Radius: 0.6, Armour: 30),
         new("knight", "Dread Knight", "body-dread-knight", 1.95, Ai.Melee, 2.8, 55, 7, 14, Elem.Phys, 1.5, 1.1, 40, 7, 10, 1, 3, Right: "axe", Left: "shield", Radius: 0.45, Armour: 40, Resist: 20),
         new("golem", "Slag Golem", "body-slag-golem", 2.6, Ai.Charger, 1.8, 90, 9, 18, Elem.Fire, 1.8, 1.7, 60, 8, 10, 1, 1, Clip: "overhead", Radius: 0.65, Armour: 40, Resist: 60),
+        new("wolf", "Barrow Wolf", "body-barrow-wolf", 0.85, Ai.Melee, 4.4, 14, 2, 4, Elem.Phys, 1.1, 0.8, 9, 2, 6, 3, 5, Radius: 0.4, Quad: true, Clip: "bite"),
+        new("boar", "Carrion Boar", "body-carrion-boar", 1.1, Ai.Charger, 3.2, 40, 4, 9, Elem.Phys, 1.4, 1.3, 24, 3, 8, 1, 3, Radius: 0.55, Quad: true, Clip: "bite", Armour: 15),
+        new("hound", "Cinder Hound", "body-cinder-hound", 0.9, Ai.Melee, 4.6, 26, 4, 8, Elem.Fire, 1.1, 0.8, 18, 6, 10, 3, 5, Radius: 0.4, Quad: true, Clip: "bite", Resist: 50),
+        new("lich", "Lich", "body-lich", 2.2, Ai.Caster, 2.4, 60, 6, 12, Elem.Cold, 9, 1.5, 60, 99, 99, 1, 1, Clip: "point", Missile: "frost", Resist: 40, Armour: 20),
         new("vorgath", "Vorgath the Ashen Warden", "body-boss", 3.0, Ai.Boss, 2.6, 650, 10, 20, Elem.Fire, 2.2, 1.4, 2500, 10, 10, 1, 1, Clip: "overhead", Missile: "ember", Radius: 0.9, Armour: 60, Resist: 40),
     };
 
@@ -291,6 +323,7 @@ public static class Data
         new("pot-mp", "Mana Draught", Kind.PotMana, 1, Price: 25),
         new("scroll", "Waystone Scroll", Kind.Scroll, 1, Price: 50),
         new("gold", "Gold", Kind.Gold, 1, Price: 1),
+        new("treasure-map", "Treasure Map", Kind.Map, 1, Price: 400),
     };
 
     private static readonly Dictionary<string, Base> _base = Bases.ToDictionary(b => b.Id);

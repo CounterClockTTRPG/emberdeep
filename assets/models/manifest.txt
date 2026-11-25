@@ -9,9 +9,11 @@ chest-ornate prop-chest-ornate-32828c
 crate prop-crate-5b29ef
 door prop-door-6e41cb
 gibbet-cage prop-gibbet-cage-327f95
+gold-pile prop-gold-pile-2baa9b
 gravestone prop-gravestone-604bea
 house prop-house-0ff7fb
 pillar prop-pillar-12a46a
+potion prop-potion-479de8
 shrine prop-shrine-a1dbf7
 tomb prop-tomb-52896f
 torch-sconce prop-torch-sconce-2c99a9

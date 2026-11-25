@@ -17,7 +17,7 @@ public sealed class Prop
     public string Kind = "deco";
 
     /// <summary>Can the hero use it (it lights up under the cursor), as against a thing only to look at?</summary>
-    public bool Usable => Kind is "chest" or "crate" or "barrel" or "urn" or "shrine" or "waystone" or "down" or "up" or "stash" or "well";
+    public bool Usable => Kind is "chest" or "crate" or "barrel" or "urn" or "shrine" or "waystone" or "down" or "up" or "exit" or "stash" or "well";
 
     /// <summary>Used once and then spent: opened (chest, crate), broken (barrel, urn), drawn on (shrine).</summary>
     public bool OneUse => Kind is "chest" or "crate" or "barrel" or "urn" or "shrine";
@@ -29,7 +29,7 @@ public sealed class Prop
     public string Title => Kind switch
     {
         "chest" => "Chest", "crate" => "Crate", "shrine" => "Shrine", "barrel" => "Barrel", "urn" => "Burial urn", "waystone" => "Waystone",
-        "down" => "The way down", "up" => "The way up", "stash" => "Your stash", "well" => "Well", _ => Model,
+        "down" => "The way down", "up" => "The way up", "exit" => "The way out", "stash" => "Your stash", "well" => "Well", _ => Model,
     };
     public int X, Y;
     /// <summary>Its footprint in cells (a house is 5 x 4), from X, Y.</summary>
@@ -83,7 +83,77 @@ public sealed class Floor
 
     public Prop Find(string kind) => Props.FirstOrDefault(p => p.Kind == kind);
 
-    public static Floor Make(ulong seed, int depth) => depth <= 0 ? MakeVillage(seed) : MakeDungeon(seed, depth);
+    public static Floor Make(ulong seed, int depth) => depth <= 0 ? MakeVillage(seed)
+        : depth >= Data.LairBase ? MakeLair(seed, depth) : MakeDungeon(seed, depth);
+
+    /// <summary>
+    /// A lair: a few big rooms, a way out (a portal) where the hero arrives, the boss in the farthest room on a dais
+    /// with three sealed chests behind it, and packs of the lair's kinds in every room, most of them champions.
+    /// Spawns carry no level: the game gives them the map's.
+    /// </summary>
+    private static Floor MakeLair(ulong seed, int depth)
+    {
+        Data.LairDef lair = Data.Lairs[depth - Data.LairBase];
+        var r = new Rng(seed * 6364136223846793005UL + (ulong)depth);
+        var f = new Floor(depth, 50, 50);
+        for (int tries = 0; tries < 400 && f.Rooms.Count < 7; tries++)
+        {
+            int w = r.Int(9, 15), h = r.Int(9, 15), x = r.Int(2, 50 - w - 2), y = r.Int(2, 50 - h - 2);
+            if (f.Rooms.Any(o => x < o.X + o.W + 3 && o.X < x + w + 3 && y < o.Y + o.H + 3 && o.Y < y + h + 3)) continue;
+            f.Rooms.Add(new Room { X = x, Y = y, W = w, H = h });
+        }
+        foreach (Room room in f.Rooms) f.Carve(room.X, room.Y, room.W, room.H);
+        for (int k = 1; k < f.Rooms.Count; k++)
+        {
+            Room near = f.Rooms.Take(k).OrderBy(o => Dist(o, f.Rooms[k])).First();
+            f.Corridor(near, f.Rooms[k], 3, r);
+        }
+        Room start = f.Rooms[0];
+        f.Start = (start.CX, start.CY + 1);
+        int[] dist = f.Distances(f.Start);
+        Room far = f.Rooms.OrderByDescending(o => dist[o.CY * f.W + o.CX]).First();
+        f.Add(null, "exit", start.CX - 1, start.CY - 2, false, 2, 0, 2, 1);
+        f.Furnish(lair.Theme, r, start, far);
+        // The boss's dais: braziers either side, three sealed chests behind it.
+        for (int k = 0; k < 3; k++)
+        {
+            int x = far.CX - 2 + k * 2, y = far.Y + 1;
+            Prop old = f.Props.FirstOrDefault(p => x >= p.X && y >= p.Y && x < p.X + p.W && y < p.Y + p.H);
+            if (old != null) f.Unblock(old);
+            if (f.Walk(x, y)) f.Add("chest-ornate", "chest", x, y, true, 1.0, Math.PI / 4);
+        }
+        // The dais itself: nothing stands on the boss's cell or around it.
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int x = far.CX + dx, y = far.CY + dy;
+                foreach (Prop old in f.Props.Where(p => p.Blocks && x >= p.X && y >= p.Y && x < p.X + p.W && y < p.Y + p.H).ToList()) f.Unblock(old);
+            }
+        f.Spawns.Add(new Spawn { Mon = lair.Boss, X = far.CX + 0.5, Y = far.CY + 0.5, Unique = lair.BossTitle, Pack = 999 });
+        int pack = 1;
+        foreach (Room room in f.Rooms)
+        {
+            if (room == start) continue;
+            for (int k = 0; k < (room == far ? 1 : 2); k++)
+            {
+                string mon = lair.Roster[r.Int(0, lair.Roster.Length)];
+                MonDef m = Data.Mon(mon);
+                bool champ = r.Chance(0.6);
+                double cx = room.X + 1 + r.Float() * (room.W - 2), cy = room.Y + 1 + r.Float() * (room.H - 2);
+                int n = r.Int(m.PackMin, m.PackMax + 2);
+                for (int i = 0; i < n; i++)
+                {
+                    double x = cx + (r.Float() - 0.5) * 3, y = cy + (r.Float() - 0.5) * 3;
+                    if (!f.Walk(x, y)) { x = cx; y = cy; }
+                    if (f.Walk(x, y)) f.Spawns.Add(new Spawn { Mon = mon, X = x, Y = y, Champion = champ && i < 2, Pack = pack });
+                }
+                pack++;
+            }
+        }
+        f.KeepConnected(f.Start);
+        f.Spawns.RemoveAll(s => !f.Walk(s.X, s.Y));
+        return f;
+    }
 
     private Floor(int depth, int w, int h)
     {
@@ -112,7 +182,7 @@ public sealed class Floor
                 if (In(xx, yy)) Blocked[yy * W + xx] = Props.Any(o => o.Blocks && xx >= o.X && yy >= o.Y && xx < o.X + o.W && yy < o.Y + o.H);
     }
 
-    private void Unblock(Prop p)
+    public void Unblock(Prop p)
     {
         Props.Remove(p);
         for (int yy = p.Y; yy < p.Y + p.H; yy++)
@@ -284,7 +354,7 @@ public sealed class Floor
 
     private static double Dist(Room a, Room b) => Math.Abs(a.CX - b.CX) + Math.Abs(a.CY - b.CY);
 
-    private void Carve(int x, int y, int w, int h)
+    public void Carve(int x, int y, int w, int h)
     {
         for (int yy = y; yy < y + h; yy++)
             for (int xx = x; xx < x + w; xx++)
@@ -292,7 +362,7 @@ public sealed class Floor
     }
 
     /// <summary>An L-shaped corridor of a width from one room's centre to the other's.</summary>
-    private void Corridor(Room a, Room b, int width, Rng r)
+    public void Corridor(Room a, Room b, int width, Rng r)
     {
         int x0 = a.CX, y0 = a.CY, x1 = b.CX, y1 = b.CY;
         if (r.Chance(0.5))
@@ -325,7 +395,7 @@ public sealed class Floor
     /// </summary>
     private static double FacingView(Rng r) => Math.PI / 4 + (r.Float() - 0.5) * 1.2;
 
-    private void Furnish(string theme, Rng r, Room start, Room far)
+    public void Furnish(string theme, Rng r, Room start, Room far)
     {
         foreach (Room room in Rooms)
         {
@@ -468,7 +538,7 @@ public sealed class Floor
     /// Take away any blocking prop that cuts the floor in two, so every open cell can be walked to from the start; a
     /// prop someone uses (chest, stairs, waystone) is left and its neighbours checked instead.
     /// </summary>
-    private void KeepConnected((int x, int y) from)
+    public void KeepConnected((int x, int y) from)
     {
         for (int pass = 0; pass < 60; pass++)
         {

@@ -58,13 +58,28 @@ public partial class GameScreen : Control
         AddChild(_hud);
         UITheme.Anchor(_hud, 0, 0, 1, 1);
         _hud.Draw += DrawHud;
+        _hud.TextureFilter = TextureFilterEnum.Nearest;
         BuildBand();
         _left = Holder(); UITheme.Anchor(_left, 0, 0, 0, 1, 16, 16, 476, -Band - 8);
         _right = Holder(); UITheme.Anchor(_right, 1, 0, 1, 1, -600, 16, -16, -Band - 8);
         _centre = Holder(); UITheme.Anchor(_centre, 0.5f, 0.2f, 0.5f, 0.2f, -300, 0, 300, 0);
         Sounds.Mood(Sounds.MoodFor(Game.Depth));
+        SwordCursor();
         Banner(Game.Map.Def.Name);
         GrabFocus();
+    }
+
+    /// <summary>The sword cursor, from the short sword's icon cut out of its background, its point the hotspot.</summary>
+    private static void SwordCursor()
+    {
+        if (Touch || DisplayServer.GetName() == "headless") return;
+        Texture2D cut = Kit.Cutout("short-sword");
+        if (cut == null) return;
+        Image img = cut.GetImage();
+        img.Decompress();
+        img.ClearMipmaps();
+        img.Resize(40, 40, Image.Interpolation.Lanczos);
+        Input.SetCustomMouseCursor(ImageTexture.CreateFromImage(img), Input.CursorShape.Cross, new Vector2(3, 37));
     }
 
     private Control Holder()
@@ -294,6 +309,10 @@ public partial class GameScreen : Control
             case "portal": Sounds.Play("waystone", 0.6f); break;
             case "shieldbreak": Say("Your arcane shield breaks.", UITheme.Dim); break;
             case "restock": Say("The deep has filled again since you were here.", UITheme.Dim); break;
+            case "lairportal": Sounds.Play("boss", 0.6f); Say($"The map burns away: a portal to {e.Text} opens.", new Color(1f, 0.5f, 0.3f)); break;
+            case "lair": Banner(e.Text); Say("No way back but the way out, and it closes behind you.", UITheme.Dim); break;
+            case "lairclosed": Say($"The way to {e.Text} closes behind you.", UITheme.Dim); break;
+            case "lairlost": Say("The lair is lost: its portal closed on your death.", UITheme.Bad); break;
             case "shrine": Sounds.Play("waystone", 0.8f); Banner(e.Text.Split(':')[0]); Say(e.Text, UITheme.Accent); break;
             case "blessing-end": Say("The shrine's blessing fades.", UITheme.Dim); break;
         }
@@ -340,8 +359,11 @@ public partial class GameScreen : Control
         if (_hover == null && _hoverDrop == null && !Over(m) && World.Ground(m) is var (gx, gy)) prop = World.PropAt(gx, gy);
         World.HoverProp = prop > 0 ? prop : 0;
         World.HoverDrop = _hoverDrop?.Id ?? 0;
-        World.AllLabels = Touch || Input.IsKeyPressed(Key.Alt);
-        MouseDefaultCursorShape = _hover != null || _hoverDrop != null || prop != 0 ? CursorShape.PointingHand : CursorShape.Arrow;
+        World.HoverActor = _hover?.Id ?? 0;
+        World.AllLabels = Touch || Input.IsKeyPressed(Key.Alt) || Profile.Current.AllNames;
+        // A sword over a foe (the Cross shape carries the sword cursor), a hand over anything else to use.
+        MouseDefaultCursorShape = _hover != null && !_hover.Npc ? CursorShape.Cross
+            : _hover != null || _hoverDrop != null || prop != 0 ? CursorShape.PointingHand : CursorShape.Arrow;
     }
 
     /// <summary>Is the mouse over the band or an open panel (so it does not order the hero)?</summary>
@@ -571,6 +593,44 @@ public partial class GameScreen : Control
         _hud.DrawString(UITheme.Body, c + new Vector2(-r, 6), text, HorizontalAlignment.Center, 2 * r, 16, UITheme.Text);
     }
 
+    private Image _mapImg;
+    private ImageTexture _mapTex;
+    private int _mapDepth = -1;
+    private double _mapT;
+
+    /// <summary>
+    /// The map as a texture, one pixel a cell (open floor, things in the way, the walls' edges), drawn again from the
+    /// seen cells four times a second rather than cell by cell every frame.
+    /// </summary>
+    private ImageTexture MapTexture(Floor f, byte[] seen)
+    {
+        if (_mapImg == null || _mapDepth != Game.Depth || _mapImg.GetWidth() != f.W || _mapImg.GetHeight() != f.H)
+        {
+            _mapImg = Image.CreateEmpty(f.W, f.H, false, Image.Format.Rgba8);
+            _mapTex = ImageTexture.CreateFromImage(_mapImg);
+            _mapDepth = Game.Depth;
+            _mapT = -1;
+        }
+        if (_mapT >= 0 && Game.Time - _mapT < 0.25 && Game.Time >= _mapT) return _mapTex;
+        _mapT = Game.Time;
+        var px = new byte[f.W * f.H * 4];
+        for (int y = 0; y < f.H; y++)
+            for (int x = 0; x < f.W; x++)
+            {
+                int i = y * f.W + x;
+                if (seen == null || seen[i] == 0) continue;
+                bool open = f.Floor_(x, y);
+                Color c = open && f.Blocked[i] ? new Color(0.35f, 0.3f, 0.25f, 0.7f)
+                    : open ? new Color(0.25f, 0.22f, 0.2f, 0.55f)
+                    : f.Floor_(x + 1, y) || f.Floor_(x - 1, y) || f.Floor_(x, y + 1) || f.Floor_(x, y - 1) ? new Color(0.7f, 0.6f, 0.45f, 0.8f)
+                    : new Color(0, 0, 0, 0);
+                px[i * 4] = (byte)(c.R * 255); px[i * 4 + 1] = (byte)(c.G * 255); px[i * 4 + 2] = (byte)(c.B * 255); px[i * 4 + 3] = (byte)(c.A * 255);
+            }
+        _mapImg.SetData(f.W, f.H, false, Image.Format.Rgba8, px);
+        _mapTex.Update(_mapImg);
+        return _mapTex;
+    }
+
     /// <summary>The seen part of the floor around the hero (or all of it, large): open cells, walls, the stairs, the hero.</summary>
     private void Map(Rect2 box, float cell, bool whole)
     {
@@ -582,18 +642,17 @@ public partial class GameScreen : Control
             ? box.Position + new Vector2((float)x, (float)y) * Math.Min(box.Size.X / f.W, box.Size.Y / f.H)
             : centre + new Vector2((float)(x - Game.Me.X), (float)(y - Game.Me.Y)) * cell;
         float cs = whole ? Math.Min(box.Size.X / f.W, box.Size.Y / f.H) : cell;
-        for (int y = 0; y < f.H; y++)
-            for (int x = 0; x < f.W; x++)
-            {
-                if (seen == null || seen[y * f.W + x] == 0) continue;
-                Vector2 p = Of(x, y);
-                if (!box.HasPoint(p) || !box.HasPoint(p + new Vector2(cs, cs))) continue;
-                bool open = f.Floor_(x, y);
-                if (open && f.Blocked[y * f.W + x]) _hud.DrawRect(new Rect2(p, new Vector2(cs, cs)), new Color(0.35f, 0.3f, 0.25f, 0.7f));
-                else if (open) _hud.DrawRect(new Rect2(p, new Vector2(cs, cs)), new Color(0.25f, 0.22f, 0.2f, 0.55f));
-                else if (f.Floor_(x + 1, y) || f.Floor_(x - 1, y) || f.Floor_(x, y + 1) || f.Floor_(x, y - 1))
-                    _hud.DrawRect(new Rect2(p, new Vector2(cs, cs)), new Color(0.7f, 0.6f, 0.45f, 0.8f));
-            }
+        ImageTexture tex = MapTexture(f, seen);
+        if (whole) _hud.DrawTextureRect(tex, new Rect2(box.Position, new Vector2(f.W, f.H) * cs), false);
+        else
+        {
+            // The part of the map around the hero that fits the box (cells outside the floor are drawn clear).
+            Vector2 cells = box.Size / cs;
+            var src = new Rect2((float)Game.Me.X - cells.X / 2, (float)Game.Me.Y - cells.Y / 2, cells.X, cells.Y);
+            Rect2 inside = src.Intersection(new Rect2(0, 0, f.W, f.H));
+            if (inside.Size.X > 0 && inside.Size.Y > 0)
+                _hud.DrawTextureRectRegion(tex, new Rect2(box.Position + (inside.Position - src.Position) * cs, inside.Size * cs), inside);
+        }
         foreach (Prop p in f.Props.Where(p => p.Kind is "down" or "up" or "waystone"))
         {
             if (seen == null || seen[p.Y * f.W + p.X] == 0) continue;

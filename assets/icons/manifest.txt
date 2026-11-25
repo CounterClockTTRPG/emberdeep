@@ -26,6 +26,7 @@ leather-cap icon-leather-cap-5e346f
 leather-gloves icon-leather-gloves-6d641f
 long-bow icon-long-bow-2725e8
 long-sword icon-long-sword-0d31f9
+map icon-map-18aea5
 plate-armour icon-plate-armour-00c840
 pot-hp icon-pot-hp-0c59ee
 pot-mp icon-pot-mp-a5c0f9
@@ -58,5 +59,6 @@ skill-step icon-skill-step-e7287e
 skill-warcry icon-skill-warcry-db7b85
 spiked-club icon-spiked-club-fafba7
 tower-shield icon-tower-shield-a08b7c
+treasure-map icon-treasure-map-c031a9
 war-axe icon-war-axe-c91eba
 war-bow icon-war-bow-5c657f

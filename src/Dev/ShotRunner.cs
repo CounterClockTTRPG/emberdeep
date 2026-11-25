@@ -182,6 +182,24 @@ public partial class ShotRunner : Node
             await Run(0.45);
             await Shot("arrows");
 
+            // A treasure map read in the village: the lair's portal; inside, the Hollow King on his dais.
+            Root.Instance.Play(Game.New(5, Cls.Sorcerer));
+            g = Root.Instance.Game;
+            g.Hero.Level = 16; g.Hero.Vigour = 300; g.Hero.Changed();
+            g.Me.Life = g.Hero.S.MaxLife;
+            g.Me.Facing = 0.8;
+            g.Hero.Pack[0] = Loot.Map(18, new Rng(7), 3);
+            g.UsePack(0);
+            await Run(0.6);
+            await Shot("lair-portal");
+            g.EnterLair();
+            Actor king = g.Foes.First(a => a.Boss);
+            foreach (Actor f in g.Foes) { f.DmgX = 0; f.Accuracy = 0; }
+            g.Me.X = king.X + 1.5; g.Me.Y = king.Y + 5;
+            if (!g.Map.Walk(g.Me.X, g.Me.Y)) (g.Me.X, g.Me.Y) = (king.X, king.Y + 3);
+            await Run(0.4);
+            await Shot("lair");
+
             // The bottom.
             Root.Instance.Play(Game.New(3, Cls.Wanderer));
             g = Root.Instance.Game;

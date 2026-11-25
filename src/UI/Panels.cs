@@ -434,6 +434,16 @@ public partial class MenuPanel : GamePanel
             full.Toggled += on => { Profile.Current.Fullscreen = on; Profile.Current.Apply(); Profile.Current.Save(); };
             Body.AddChild(full);
         }
+        foreach (var (text, get, set) in new (string, Func<bool>, Action<bool>)[]
+                 {
+                     ("Damage numbers", () => Profile.Current.DamageNumbers, v => Profile.Current.DamageNumbers = v),
+                     ("Show every drop's name", () => Profile.Current.AllNames, v => Profile.Current.AllNames = v),
+                 })
+        {
+            var cb = new CheckBox { Text = text, ButtonPressed = get(), FocusMode = FocusModeEnum.None };
+            cb.Toggled += v => { set(v); Profile.Current.Save(); };
+            Body.AddChild(cb);
+        }
         Body.AddChild(new HSeparator());
         Body.AddChild(Line(GameScreen.Touch
             ? "Tap to walk, fight, pick up and use. Tap the right-hand skill icon to make taps use that skill. Back closes panels."
@@ -445,7 +455,7 @@ public partial class MenuPanel : GamePanel
         row.AddChild(UITheme.Flat("Save and go to the title", () => Root.Instance.ShowTitle(), 19, UITheme.Bone));
         row.AddChild(UITheme.Flat("Quit", () => { s.Autosave(); GetTree().Quit(); }, 19, UITheme.Ash));
         Body.AddChild(row);
-        GetChild<VBoxContainer>(0).GetChild<ScrollContainer>(1).CustomMinimumSize = new Vector2(0, 330);
+        GetChild<VBoxContainer>(0).GetChild<ScrollContainer>(1).CustomMinimumSize = new Vector2(0, 470);
     }
 
     private static Control Slider(string name, bool on, float volume, System.Action<bool, float> set)

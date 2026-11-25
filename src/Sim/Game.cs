@@ -30,6 +30,10 @@ public sealed class Actor
     /// <summary>A champion's traits (Data.Traits ids), shared by its pack.</summary>
     public List<string> Traits = new();
     public bool Has(string trait) => Traits.Contains(trait);
+    /// <summary>A boss (Vorgath, a lair's): calls its kind at two thirds and one third of its life, cannot be stunned or
+    /// thrown back; drawn larger by <see cref="Scale"/>.</summary>
+    public bool Boss;
+    public double Scale = 1;
     public int Pack;
     public double Think, DmgX = 1, Accuracy, Defense;
     public int Resist;
@@ -71,6 +75,13 @@ public sealed class Zone
     public bool FromHero;
     public double Dmg;
     public Elem Elem;
+}
+
+public sealed class LairState
+{
+    public int Kind, Level, FromDepth;
+    public ulong Seed;
+    public double X, Y;
 }
 
 public sealed class Drop
@@ -154,7 +165,7 @@ public sealed partial class Game
         {
             if (_map == null || _mapDepth != Depth)
             {
-                _map = Floor.Make(Seed, Depth);
+                _map = Floor.Make(Depth >= Data.LairBase ? Lair?.Seed ?? Seed : Seed, Depth);
                 _mapDepth = Depth;
                 // What was broken here stays broken: its cell is open again.
                 if (Floors.TryGetValue(Depth, out FloorState st))
@@ -165,6 +176,12 @@ public sealed partial class Game
     }
 
     public FloorState Here => Floors[Depth];
+
+    /// <summary>The level of what lives here: the floor's, or in a lair the map's.</summary>
+    public int AreaLevel => Depth >= Data.LairBase ? Lair?.Level ?? 1 : Data.MonLevel(Depth);
+
+    /// <summary>A lair whose portal a treasure map has opened (null: none): which, from what, to where it leads back.</summary>
+    public LairState Lair;
     public IEnumerable<Actor> Foes => Here.Actors.Where(a => !a.Npc && !a.Hero);
 
     /// <summary>The way back in the village, beside the waystone.</summary>
@@ -194,7 +211,7 @@ public sealed partial class Game
     public void Enter(int depth, (double x, double y)? at)
     {
         if (Floors.TryGetValue(Depth, out FloorState leaving)) leaving.LeftAt = Time;
-        Depth = Math.Clamp(depth, 0, Data.Bottom);
+        Depth = depth >= Data.LairBase ? depth : Math.Clamp(depth, 0, Data.Bottom);
         // A floor left for long enough fills up again (what was seen of it stays on the map).
         if (Depth > 0 && Floors.TryGetValue(Depth, out FloorState old) && old.LeftAt >= 0 && Time - old.LeftAt >= RestockAfter)
         {
@@ -214,7 +231,7 @@ public sealed partial class Game
         Order = new Order();
         st.Missiles.Clear();
         st.Zones.Clear();
-        if (Depth > Hero.Deepest) Hero.Deepest = Depth;
+        if (Depth > Hero.Deepest && Depth < Data.LairBase) Hero.Deepest = Depth;
         if (Depth == 0) SmithWares = Loot.SmithStock(Hero.Level, R());
         Reveal();
         Emit(new Ev { Kind = "enter", V = Depth, Text = f.Def.Name });
@@ -229,7 +246,8 @@ public sealed partial class Game
                 st.Actors.Add(new Actor { Id = NextId++, Def = who, Npc = true, X = x, Y = y, Life = 1, MaxLife = 1, Facing = Math.PI });
             return st;
         }
-        foreach (Spawn s in f.Spawns) st.Actors.Add(MakeMonster(s.Mon, s.X, s.Y, f.Depth, s.Champion, s.Unique, s.Pack));
+        int level = f.Depth >= Data.LairBase ? Lair?.Level ?? 1 : 0;
+        foreach (Spawn s in f.Spawns) st.Actors.Add(MakeMonster(s.Mon, s.X, s.Y, f.Depth, s.Champion, s.Unique, s.Pack, level));
         return st;
     }
 
@@ -243,12 +261,13 @@ public sealed partial class Game
             if (depth != Depth && depth > 0) st.LeftAt = Time - RestockAfter;
     }
 
-    public Actor MakeMonster(string id, double x, double y, int depth, bool champion = false, string unique = null, int pack = 0)
+    public Actor MakeMonster(string id, double x, double y, int depth, bool champion = false, string unique = null, int pack = 0, int level = 0)
     {
         MonDef m = Data.Mon(id);
-        int lvl = Data.MonLevel(depth) + (champion ? 2 : 0) + (unique != null ? 3 : 0);
+        int lvl = (level > 0 ? level : Data.MonLevel(depth)) + (champion ? 2 : 0) + (unique != null ? 3 : 0);
         double life = m.Life * (1 + 0.2 * (lvl - 1)), dmg = 0.8 * (1 + 0.1 * (lvl - 1));
         var u = Data.Uniques.FirstOrDefault(q => q.title == unique);
+        Data.LairDef lb = unique == null ? null : Data.Lairs.FirstOrDefault(l => l.BossTitle == unique);
         if (champion) { life *= 2.5; dmg *= 1.3; }
         // A champion pack shares one or two traits, rolled from the seed, the floor and the pack.
         var traits = new List<string>();
@@ -259,12 +278,14 @@ public sealed partial class Game
             while (traits.Count < n) { string t = Data.Traits[tr.Int(0, Data.Traits.Length)].id; if (!traits.Contains(t)) traits.Add(t); }
             if (traits.Contains("mighty")) dmg *= 1.35;
         }
-        if (unique != null) { life *= u.lifeX; dmg *= u.dmgX; }
+        if (lb != null) { life *= lb.BossLife; dmg *= lb.BossDmg; }
+        else if (unique != null && u.title != null) { life *= u.lifeX; dmg *= u.dmgX; }
         var a = new Actor
         {
             Id = NextId++, Def = id, Level = lvl, X = x, Y = y, MaxLife = Math.Round(life), Life = Math.Round(life), DmgX = dmg,
             Champion = champion, Title = unique ?? (champion ? $"{m.Name} Champion" : null), Pack = pack, Traits = traits,
             Accuracy = 10 + 9 * lvl, Defense = m.Armour + 5 * lvl, Resist = m.Resist, Facing = R().Float() * Math.Tau,
+            Boss = m.Ai == Ai.Boss || lb != null, Scale = lb?.BossScale ?? 1,
         };
                 return a;
     }
@@ -428,7 +449,7 @@ public sealed partial class Game
             }
     }
 
-    private static double Mass(Actor a) => a.Npc ? 1000 : a.Hero ? 3 : a.M?.Ai == Ai.Boss ? 20 : a.Radius > 0.55 ? 4 : 1;
+    private static double Mass(Actor a) => a.Npc ? 1000 : a.Hero ? 3 : a.Boss ? 20 : a.Radius > 0.55 ? 4 : 1;
 
     // ---- the hero's orders ------------------------------------------------------------------------------------------
 
@@ -506,13 +527,14 @@ public sealed partial class Game
             case "use":
             {
                 Prop p = Map.Props.FirstOrDefault(x => x.Id == o.Target);
-                if (p == null && o.Target != -2) { Halt(); break; }
-                (double px, double py) = p == null ? PortalSpot : (p.X + p.W / 2.0, p.Y + p.H / 2.0);
+                if (p == null && !(o.Target == -2 || o.Target == -3 && Lair != null && Lair.FromDepth == Depth)) { Halt(); break; }
+                (double px, double py) = p != null ? (p.X + p.W / 2.0, p.Y + p.H / 2.0) : o.Target == -3 ? (Lair.X, Lair.Y) : PortalSpot;
                 double reach = p == null ? 1.2 : Math.Max(p.W, p.H) / 2.0 + 1.0;
                 if (!WalkTo(Me, px, py, reach, dt)) break;
                 Halt();
                 // A barrel or an urn is broken with a swing: the blow breaks it.
                 if (p != null && p.Breaks && !Here.Opened.Contains(p.Id)) Begin(Me, "smash", px, py, -p.Id - 10);
+                else if (p == null && o.Target == -3) EnterLair();
                 else Use(p);
                 break;
             }
@@ -543,7 +565,7 @@ public sealed partial class Game
         double d = Dist(a, Me);
         if (!a.Awake)
         {
-            if (Me.Alive && Me.Hidden <= 0 && d < (m.Ai == Ai.Boss ? 12 : 9) && Map.Sight(a.X, a.Y, Me.X, Me.Y)) Wake(a);
+            if (Me.Alive && Me.Hidden <= 0 && d < (a.Boss ? 12 : 9) && Map.Sight(a.X, a.Y, Me.X, Me.Y)) Wake(a);
             else { if (a.Act == "walk") a.Act = "idle"; return; }
         }
         if (!Me.Alive || Me.Hidden > 0)
@@ -552,7 +574,7 @@ public sealed partial class Game
             if (!Me.Alive) a.Awake = false;
             return;
         }
-        if (m.Ai == Ai.Boss) BossPhases(a);
+        if (a.Boss) BossPhases(a);
         double reach = a.Radius + Me.Radius + m.Range * (m.Ranges ? 1 : 0.6);
         bool see = Map.Sight(a.X, a.Y, Me.X, Me.Y);
         if (m.Ranges)
@@ -586,7 +608,7 @@ public sealed partial class Game
     {
         foreach (Actor o in Here.Actors.Where(o => o.Alive && !o.Npc && (o == a || (a.Pack > 0 && o.Pack == a.Pack))))
         {
-            if (!o.Awake && o.M?.Ai == Ai.Boss) Emit(new Ev { Kind = "boss", A = o.Id, Text = o.Name });
+            if (!o.Awake && o.Boss) Emit(new Ev { Kind = "boss", A = o.Id, Text = o.Name });
             o.Awake = true;
         }
     }
@@ -597,14 +619,17 @@ public sealed partial class Game
         int phase = a.Life < a.MaxLife / 3 ? 2 : a.Life < a.MaxLife * 2 / 3 ? 1 : 0;
         if (phase <= a.Phase) return;
         a.Phase = phase;
-        Emit(new Ev { Kind = "say", A = a.Id, Text = phase == 1 ? "Burn, little light." : "The deep remembers its fire!" });
+        bool lair = Depth >= Data.LairBase;
+        string minion = lair ? Data.Lairs[Depth - Data.LairBase].Roster[0] : "imp";
+        Emit(new Ev { Kind = "say", A = a.Id, Text = lair ? (phase == 1 ? "You came for my hoard. Stay for my hunger." : "Rise, all of you! Rise!")
+            : phase == 1 ? "Burn, little light." : "The deep remembers its fire!" });
         Rng r = R();
         for (int k = 0; k < 2 + 2 * phase; k++)
         {
             double ang = r.Float() * Math.Tau;
             double x = a.X + Math.Sin(ang) * 3, y = a.Y + Math.Cos(ang) * 3;
             if (!Map.Walk(x, y)) continue;
-            Actor imp = MakeMonster("imp", x, y, Depth, false, null, a.Pack);
+            Actor imp = MakeMonster(minion, x, y, Depth, false, null, a.Pack, AreaLevel);
             imp.Awake = true;
             Here.Actors.Add(imp);
             Emit(new Ev { Kind = "blast", X = x, Y = y, V = 1, E = Elem.Fire });
@@ -741,7 +766,7 @@ public sealed partial class Game
         if (cold > 0) dealt += HurtFoe(t, cold, Elem.Cold, false, 1.5);
         if (light > 0) dealt += HurtFoe(t, light, Elem.Light, false, 0);
         if (s.LifeSteal > 0) Me.Life = Math.Min(Me.MaxLife, Me.Life + dealt * s.LifeSteal / 100.0);
-        if (knock > 0 && t.Alive && t.M?.Ai != Ai.Boss)
+        if (knock > 0 && t.Alive && !t.Boss)
         {
             double dx = t.X - Me.X, dy = t.Y - Me.Y, len = Math.Max(0.01, Math.Sqrt(dx * dx + dy * dy));
             for (int k = 0; k < 6; k++) Move(t, dx / len * knock / 6, dy / len * knock / 6);
@@ -797,7 +822,7 @@ public sealed partial class Game
                 {
                     var (phys, _, _, _) = WeaponRoll(0.5 + 0.1 * rank, r);
                     HurtFoe(a, phys, Elem.Phys, false, 0);
-                    if (a.M?.Ai != Ai.Boss) a.Stun = Math.Max(a.Stun, 1 + 0.15 * rank);
+                    if (!a.Boss) a.Stun = Math.Max(a.Stun, 1 + 0.15 * rank);
                     Wake(a);
                 }
                 Emit(new Ev { Kind = "warcry", X = Me.X, Y = Me.Y });
@@ -811,7 +836,7 @@ public sealed partial class Game
                 {
                     var (phys, _, _, _) = WeaponRoll(2 + 0.25 * rank, r);
                     HurtFoe(a, phys, Elem.Phys, false, 0);
-                    if (a.M?.Ai != Ai.Boss) a.Stun = Math.Max(a.Stun, 0.6);
+                    if (!a.Boss) a.Stun = Math.Max(a.Stun, 0.6);
                     Wake(a);
                 }
                 Emit(new Ev { Kind = "quake", X = Me.X, Y = Me.Y, V = 6 });
@@ -992,7 +1017,7 @@ public sealed partial class Game
         if (!t.Awake) Wake(t);
         if (t.Life <= 0) { Die(t); return dmg; }
         // A heavy blow staggers (not a boss, not twice in a row).
-        if (dmg > t.MaxLife / 6 && t.Act is not ("hit" or "dead") && t.M?.Ai != Ai.Boss)
+        if (dmg > t.MaxLife / 6 && t.Act is not ("hit" or "dead") && !t.Boss)
         {
             t.Act = "hit"; t.ActT = 0; t.ActDur = 0.3; t.ActAt = 99; t.ActDone = true;
         }
@@ -1008,7 +1033,7 @@ public sealed partial class Game
         if (!Me.Alive || Depth == 0) return;
         Stats s = Hero.S;
         Rng r = R();
-        int alvl = from?.Level ?? Data.MonLevel(Depth);
+        int alvl = from?.Level ?? AreaLevel;
         if (accuracy > 0 && !r.Chance(HitChance(accuracy, s.Armour, alvl, Hero.Level))) { Emit(new Ev { Kind = "miss", A = 0, X = Me.X, Y = Me.Y }); return; }
         if (s.Evade > 0 && r.Chance(s.Evade / 100.0)) { Emit(new Ev { Kind = "dodge", A = 0, X = Me.X, Y = Me.Y }); return; }
         if (s.Block > 0 && Me.Act is "idle" or "walk" or "attack" && r.Chance(s.Block / 100.0)) { Emit(new Ev { Kind = "block", A = 0, X = Me.X, Y = Me.Y }); return; }
@@ -1050,7 +1075,7 @@ public sealed partial class Game
         if (Hero.Level > t.Level + 5) xp *= Math.Max(0.1, 1 - (Hero.Level - t.Level - 5) * 0.15);
         if (Hero.BlessingLeft > 0 && Hero.Blessing == "wisdom") xp *= 1.5;
         GainXp((long)Math.Round(xp));
-        double quality = m.Ai == Ai.Boss ? 10 : t.Title != null && !t.Champion ? 7 : t.Champion ? 2.5 : 1;
+        double quality = t.Boss ? 10 : t.Title != null && !t.Champion ? 7 : t.Champion ? 2.5 : 1;
         foreach (Item it in Loot.Drop(t.Level, quality, Hero.S.MagicFind, Hero.S.GoldFind, R())) Place(it, t.X, t.Y);
         var u = Data.Uniques.FirstOrDefault(q => q.title == t.Title);
         if (u.quest != null)
@@ -1060,7 +1085,7 @@ public sealed partial class Game
                 Hero.Quests[u.quest] = 2;
                 Emit(new Ev { Kind = "quest", Text = $"{t.Title} is slain. Return to the elder." });
             }
-            if (m.Ai == Ai.Boss) { Won = true; Emit(new Ev { Kind = "won", Text = "Vorgath falls. The Emberdeep goes quiet." }); }
+            if (t.Def == "vorgath") { Won = true; Emit(new Ev { Kind = "won", Text = "Vorgath falls. The Emberdeep goes quiet." }); }
         }
     }
 
@@ -1100,6 +1125,13 @@ public sealed partial class Game
         Me.Mana = Me.MaxMana;
         Me.Act = "idle";
         Me.DeadT = 0;
+        // Dying in a lair loses it: the portal closes behind the dead.
+        if (Depth >= Data.LairBase && Lair != null)
+        {
+            Floors.Remove(Depth);
+            Lair = null;
+            Emit(new Ev { Kind = "lairlost" });
+        }
         Enter(0, null);
     }
 
@@ -1245,7 +1277,7 @@ public sealed partial class Game
                 if (Here.Opened.Contains(p.Id)) return;
                 Here.Opened.Add(p.Id);
                 Emit(new Ev { Kind = "chest", A = p.Id, X = p.X + 0.5, Y = p.Y + 0.5, Text = p.Kind });
-                foreach (Item it in Loot.Drop(Data.MonLevel(Depth) + 1, p.Kind == "chest" ? 2 : 1, Hero.S.MagicFind, Hero.S.GoldFind, R())) Place(it, p.X + 0.5, p.Y + 0.5);
+                foreach (Item it in Loot.Drop(AreaLevel + 1, p.Kind == "chest" ? (Depth >= Data.LairBase ? 5 : 2) : 1, Hero.S.MagicFind, Hero.S.GoldFind, R())) Place(it, p.X + 0.5, p.Y + 0.5);
                 break;
             case "barrel" or "urn":
             {
@@ -1255,7 +1287,7 @@ public sealed partial class Game
                 Emit(new Ev { Kind = "break", A = p.Id, X = p.X + 0.5, Y = p.Y + 0.5, Text = p.Kind });
                 // Now and then something inside: gold or a draught, rarely more.
                 Rng r = R();
-                if (r.Chance(0.4)) foreach (Item it in Loot.Drop(Data.MonLevel(Depth), 0.6, Hero.S.MagicFind, Hero.S.GoldFind, r)) Place(it, p.X + 0.5, p.Y + 0.5);
+                if (r.Chance(0.4)) foreach (Item it in Loot.Drop(AreaLevel, 0.6, Hero.S.MagicFind, Hero.S.GoldFind, r)) Place(it, p.X + 0.5, p.Y + 0.5);
                 break;
             }
             case "waystone":
@@ -1277,6 +1309,9 @@ public sealed partial class Game
             case "stash":
                 Emit(new Ev { Kind = "stash" });
                 break;
+            case "exit":
+                LeaveLair();
+                break;
             case "shrine":
             {
                 if (Here.Opened.Contains(p.Id)) return;
@@ -1291,6 +1326,43 @@ public sealed partial class Game
                 Emit(new Ev { Kind = "say", Text = "The water is black and very cold. Something far below breathes warm air up the shaft." });
                 break;
         }
+    }
+
+    // ---- lairs ------------------------------------------------------------------------------------------------------
+
+    /// <summary>Read a treasure map: its lair's portal opens beside the hero. Null when done, else why not.</summary>
+    public string OpenLair(Item map)
+    {
+        if (Depth >= Data.LairBase) return "not from inside a lair";
+        if (Lair != null) return "a lair's portal is already open";
+        if (map.Lair < 0) return "the map is blank";
+        double ax = Me.X + Math.Sin(Me.Facing) * 1.6, ay = Me.Y + Math.Cos(Me.Facing) * 1.6;
+        if (!Map.Walk(ax, ay)) (ax, ay) = (Me.X, Me.Y + 1.4);
+        if (!Map.Walk(ax, ay)) (ax, ay) = (Me.X + 1.4, Me.Y);
+        Lair = new LairState { Kind = map.Lair, Seed = map.MapSeed, Level = map.Level, FromDepth = Depth, X = ax, Y = ay };
+        Emit(new Ev { Kind = "lairportal", X = ax, Y = ay, Text = Data.Lairs[map.Lair].Name });
+        return null;
+    }
+
+    /// <summary>Step through the lair's portal.</summary>
+    public void EnterLair()
+    {
+        if (Lair == null) return;
+        int depth = Data.LairBase + Lair.Kind;
+        Floors.Remove(depth);
+        Enter(depth, null);
+        Emit(new Ev { Kind = "lair", Text = Data.Lairs[Lair.Kind].Name });
+    }
+
+    /// <summary>Out of the lair by its way out, back where the map was read; the lair closes behind.</summary>
+    public void LeaveLair()
+    {
+        if (Lair == null || Depth < Data.LairBase) return;
+        LairState l = Lair;
+        Floors.Remove(Depth);
+        Lair = null;
+        Enter(l.FromDepth, (l.X, l.Y + 1.0));
+        Emit(new Ev { Kind = "lairclosed", Text = Data.Lairs[l.Kind].Name });
     }
 
     /// <summary>Travel by waystone to a floor whose waystone has been touched. Null when done.</summary>
@@ -1349,6 +1421,8 @@ public sealed partial class Game
                 Emit(new Ev { Kind = "portal", X = Me.X, Y = Me.Y });
                 Enter(0, (PortalSpot.x, PortalSpot.y + 1.2));
                 return null;
+            case Kind.Map:
+                return OpenLair(it);
             default:
                 return "it cannot be used";
         }
@@ -1378,12 +1452,13 @@ public sealed partial class Game
     {
         switch (quest)
         {
-            case "hag": Hero.SkillPoints += 1; Hero.Gold += 300; break;
+            case "hag": Hero.SkillPoints += 1; Hero.Gold += 300; Place(Loot.Map(Hero.Level + 2, R(), 0), Me.X, Me.Y); break;
             case "rite":
                 Hero.AttrPoints += 5;
                 Place(Loot.Make(Loot.PickBase(Hero.Level + 2, R()).Id, Rarity.Rare, Hero.Level + 3, R()), Me.X, Me.Y);
+                Place(Loot.Map(Hero.Level + 3, R(), 2), Me.X, Me.Y);
                 break;
-            case "warden": Hero.Gold += 2000; break;
+            case "warden": Hero.Gold += 2000; Place(Loot.Map(Hero.Level + 4, R(), 3), Me.X, Me.Y); break;
         }
         Emit(new Ev { Kind = "reward", Text = quest });
     }

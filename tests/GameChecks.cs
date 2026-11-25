@@ -379,6 +379,51 @@ public partial class SelfCheck
     }
 
     [Section]
+    private void Lairs()
+    {
+        foreach (int k in Enumerable.Range(0, Data.Lairs.Length))
+        {
+            Data.LairDef lair = Data.Lairs[k];
+            Floor f = Floor.Make(1234 + (ulong)k, Data.LairBase + k);
+            int[] d = f.Distances(f.Start);
+            int lost = 0;
+            for (int c = 0; c < f.W * f.H; c++) if (f.Cells[c] == 1 && !f.Blocked[c] && d[c] < 0) lost++;
+            Check(lost == 0 && f.Find("exit") != null, $"{lair.Name}: every cell can be reached, and the way out is there");
+            Check(f.Spawns.Any(s => s.Unique == lair.BossTitle) && f.Props.Count(p => p.Model == "chest-ornate") >= 2, $"{lair.Name}: {lair.BossTitle} and the sealed chests");
+            Check(f.Spawns.Count(s => s.Champion) >= 4, $"{lair.Name}: champions");
+        }
+        // A map from a named foe; read, it opens a portal; through it, the lair at the map's level; out, back.
+        var r = new Rng(9);
+        int maps = 0;
+        for (int k = 0; k < 400; k++) maps += Loot.Drop(10, 7, 0, 0, r).Count(i => i.Base == "treasure-map");
+        Check(maps > 100, $"named foes leave treasure maps ({maps} in 400)");
+        Game g = Bare(Cls.Sorcerer, 3);
+        g.Hero.Level = 12; g.Hero.Changed();
+        Item map = Loot.Map(14, new Rng(3), 3);
+        int slot = Array.IndexOf(g.Hero.Pack, null);
+        g.Hero.Pack[slot] = map;
+        double ox = g.Me.X, oy = g.Me.Y;
+        Check(g.UsePack(slot) == null && g.Lair != null && g.Hero.Pack[slot] == null, "a map, read, opens a portal (and is gone)");
+        g.OrderUse(-3);
+        Run(g, 4);
+        Check(g.Depth == Data.LairBase + 3 && g.Map.Def.Name == "The Hollow King's Crypt", "through the portal: the lair");
+        Actor boss = g.Foes.First(a => a.Title == "Saelith the Hollow King");
+        Check(boss.Boss && boss.Scale >= 1 && boss.Level >= 14 && boss.MaxLife > 2000, $"its boss, at the map's level ({boss.Level}, {boss.MaxLife})");
+        Check(g.Foes.Where(a => !a.Boss).All(a => a.Level >= 14), "and everything in it");
+        g.Use(g.Map.Find("exit"));
+        Check(g.Depth == 3 && g.Lair == null && Game.Dist(g.Me.X, g.Me.Y, ox, oy) < 3 && !g.Floors.ContainsKey(Data.LairBase + 3), "the way out leads back, and the lair closes");
+        // Dying in a lair loses it.
+        g.Hero.Pack[slot] = Loot.Map(14, new Rng(4), 0);
+        g.UsePack(slot);
+        g.EnterLair();
+        g.Me.Life = 0.1;
+        Actor q = g.Foes.First();
+        q.X = g.Me.X + 0.8; q.Y = g.Me.Y; q.DmgX = 100; q.Accuracy = 1e6; q.Awake = true;
+        Run(g, 10);
+        Check(g.Depth == 0 && g.Lair == null, "dying in a lair loses it");
+    }
+
+    [Section]
     private void Comforts()
     {
         Game g = Bare(Cls.Rogue, 1);

@@ -19,8 +19,14 @@ public partial class World3D : Node3D
     private DirectionalLight3D _sun;
     private OmniLight3D _heroLight;
     private Node3D _level, _dyn;
-    private ShaderMaterial _walls, _glow;
-    private StandardMaterial3D _ground;
+    private ShaderMaterial _walls, _glow, _glowFoe, _glowFolk, _ground;
+    private readonly Shader _glow0 = new() { Code = GlowShader };
+    /// <summary>The monster or village folk under the cursor (0: none): it glows red or gold.</summary>
+    public int HoverActor;
+    private int _hoverShown, _builtThisFrame;
+    private Image _seenImg;
+    private ImageTexture _seenTex;
+    private double _seenT;
     private int _builtDepth = -1;
     private ulong _builtSeed;
     private readonly Dictionary<int, Figure3D> _figs = new();
@@ -71,8 +77,12 @@ public partial class World3D : Node3D
         _heroLight = new OmniLight3D { LightColor = new Color(1f, 0.78f, 0.55f), LightEnergy = 1.4f, OmniRange = 9, OmniAttenuation = 1.2f };
         AddChild(_heroLight);
         _walls = new ShaderMaterial { Shader = new Shader { Code = WallShader } };
-        _ground = new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 0.95f };
-        _glow = new ShaderMaterial { Shader = new Shader { Code = GlowShader } };
+        _ground = new ShaderMaterial { Shader = new Shader { Code = GroundShader } };
+        _glowFoe = new ShaderMaterial { Shader = _glow0 };
+        _glowFoe.SetShaderParameter("tint", new Color(1f, 0.25f, 0.15f));
+        _glowFolk = new ShaderMaterial { Shader = _glow0 };
+        _glowFolk.SetShaderParameter("tint", new Color(1f, 0.85f, 0.45f));
+        _glow = new ShaderMaterial { Shader = _glow0 };
         _dyn = new Node3D { Name = "Dynamic" };
         AddChild(_dyn);
     }
@@ -118,6 +128,7 @@ public partial class World3D : Node3D
         _fx.Clear();
         _flicker.Clear();
         _portal = null;
+        _lairPortal = null;
         _level = new Node3D { Name = "Level" };
         AddChild(_level);
         Floor f = Game.Map;
@@ -193,6 +204,17 @@ public partial class World3D : Node3D
             }
         foreach (Prop p in f.Props) AddProp(f, p);
         if (village) Woods(f);
+        // Fog of war: what has not been seen stays dark (a texture of the seen cells, read by the floor and walls).
+        _seenImg = Image.CreateEmpty(f.W, f.H, false, Image.Format.R8);
+        _seenTex = ImageTexture.CreateFromImage(_seenImg);
+        foreach (ShaderMaterial m in new[] { _ground, _walls })
+        {
+            m.SetShaderParameter("seen", _seenTex);
+            m.SetShaderParameter("size", new Vector2(f.W, f.H));
+            m.SetShaderParameter("fog", village ? 0f : 1f);
+        }
+        _seenT = -1;
+        _hoverShown = 0;
     }
 
     private static bool NearFloor(Floor f, int x, int y)
@@ -227,6 +249,11 @@ public partial class World3D : Node3D
         if (p.Kind is "down" or "up")
         {
             node = Stairs(p, Palette(f.Def.Theme).wall);
+        }
+        else if (p.Kind == "exit")
+        {
+            node = PortalRing(new Color(0.4f, 0.6f, 1f));
+            node.Position = at;
         }
         else
         {
@@ -325,6 +352,31 @@ public partial class World3D : Node3D
             tw.Node.Transform = new Transform3D(rot, pos);
             if (t >= 1) { tw.Node.Transform = tw.To; _tweens.Remove(tw); }
         }
+    }
+
+    /// <summary>Is a place seen yet (always, in the village)?</summary>
+    public bool Seen(double x, double y)
+    {
+        if (Game.Depth == 0) return true;
+        Floor f = Game.Map;
+        int cx = (int)Math.Floor(x), cy = (int)Math.Floor(y);
+        return f.In(cx, cy) && Game.Here.Seen != null && Game.Here.Seen[cy * f.W + cx] != 0;
+    }
+
+    /// <summary>Five times a second: the seen cells into the fog texture, and props hidden until their place is seen.</summary>
+    private void Fog()
+    {
+        if (_seenImg == null || _clock - _seenT < 0.2) return;
+        _seenT = _clock;
+        byte[] seen = Game.Here.Seen;
+        if (seen == null) return;
+        var bytes = new byte[seen.Length];
+        for (int i = 0; i < seen.Length; i++) bytes[i] = seen[i] != 0 ? (byte)255 : (byte)0;
+        _seenImg.SetData(_seenImg.GetWidth(), _seenImg.GetHeight(), false, Image.Format.R8, bytes);
+        _seenTex.Update(_seenImg);
+        foreach (Prop p in Game.Map.Props)
+            if (_props.TryGetValue(p.Id, out Node3D n) && !(p.Breaks && Game.Here.Opened.Contains(p.Id)))
+                n.Visible = Seen(p.X + p.W / 2.0, p.Y + p.H / 2.0);
     }
 
     /// <summary>A used shrine: its fire and candles go out, its light dies.</summary>
@@ -464,6 +516,7 @@ public partial class World3D : Node3D
         Effects((float)dt);
         Tweens((float)dt);
         Glow();
+        Fog();
         foreach (var (l, e, ph) in _flicker) l.LightEnergy = e * (0.85f + 0.15f * Mathf.Sin((float)_clock * 9 + ph) * Mathf.Sin((float)_clock * 5.3f + ph * 2));
         Vector3 hero = At(Game.Me.X, Game.Me.Y);
         _camAt = _camAt == Vector3.Zero || _camAt.DistanceTo(hero) > 12 ? hero : _camAt.Lerp(hero, Mathf.Min(1, (float)dt * 8));
@@ -483,8 +536,17 @@ public partial class World3D : Node3D
         var live = new HashSet<int> { 0 };
         foreach (Actor a in Game.Here.Actors) live.Add(a.Id);
         foreach (int id in _figs.Keys.Where(id => !live.Contains(id)).ToList()) { _figs[id].QueueFree(); _figs.Remove(id); }
+        _builtThisFrame = 0;
         Show(Game.Me, dt);
-        foreach (Actor a in Game.Here.Actors) Show(a, dt);
+        // Figures not built yet come nearest first, a few a frame (entering a floor does not stall on fifty models).
+        foreach (Actor a in Game.Here.Actors.OrderBy(a => _figs.ContainsKey(a.Id) ? -1 : Game.Dist(a, Game.Me))) Show(a, dt);
+        if (HoverActor != _hoverShown)
+        {
+            if (_figs.TryGetValue(_hoverShown, out Figure3D old)) old.Overlay(null, 0);
+            Actor h = Game.Find(HoverActor);
+            if (h != null && _figs.TryGetValue(HoverActor, out Figure3D now)) now.Overlay(h.Npc ? _glowFolk : _glowFoe, 1.3f);
+            _hoverShown = HoverActor;
+        }
         if (_shield == null)
         {
             _shield = new MeshInstance3D
@@ -511,7 +573,7 @@ public partial class World3D : Node3D
         {
             MonDef m = a.M;
             body = m.Body;
-            h = (float)m.Height * (a.Champion ? 1.12f : 1) * (a.Title != null && !a.Champion && m.Ai != Ai.Boss ? 1.2f : 1);
+            h = (float)m.Height * (a.Champion ? 1.12f : 1) * (a.Title != null && !a.Champion && m.Ai != Ai.Boss ? 1.2f : 1) * (float)a.Scale;
         }
         var fig = new Figure3D(body, h) { Name = a.Hero ? "Hero" : $"A{a.Id}" };
         _dyn.AddChild(fig);
@@ -555,7 +617,12 @@ public partial class World3D : Node3D
 
     private void Show(Actor a, float dt)
     {
-        if (!_figs.TryGetValue(a.Id, out Figure3D fig)) _figs[a.Id] = fig = MakeFigure(a);
+        if (!_figs.TryGetValue(a.Id, out Figure3D fig))
+        {
+            if (!a.Hero && (Game.Dist(a, Game.Me) > (Game.Depth == 0 ? 40 : 26) || _builtThisFrame >= 4)) return;
+            _builtThisFrame++;
+            _figs[a.Id] = fig = MakeFigure(a);
+        }
         Vector3 want = At(a.X, a.Y);
         float d = want.DistanceTo(fig.Position);
         fig.Position = d > 3 ? want : fig.Position.Lerp(want, Mathf.Min(1, dt * 18));
@@ -566,7 +633,7 @@ public partial class World3D : Node3D
         }
         fig.Rotation = new Vector3(0, Mathf.LerpAngle(fig.Rotation.Y, (float)a.Facing, Mathf.Min(1, dt * 14)), 0);
         float far = Game.Depth == 0 ? 40 : 26;
-        fig.Visible = a.Hero || Game.Dist(a, Game.Me) < far;
+        fig.Visible = a.Hero || Game.Dist(a, Game.Me) < far && Seen(a.X, a.Y);
         if (!fig.Visible) return;
         if (a.Hero)
         {
@@ -587,6 +654,18 @@ public partial class World3D : Node3D
         fig.Hold(held, null, h.Equip[(int)Slot.Shield] != null ? "shield" : null);
         if (fig.BodyName is "body-man" or "body-woman") fig.Wear(Outfit(h));
     }
+
+    /// <summary>Every piece a base body has (scripts/figures.py makes them as wear-m-* and wear-f-*).</summary>
+    public static readonly string[] Pieces =
+    {
+        "quilted-armour", "leather-armour", "chain-hauberk", "plate-armour", "leather-cap", "iron-helm", "great-helm",
+        "leather-gloves", "chain-gloves", "gauntlets", "leather-boots", "heavy-boots", "greaves", "trousers",
+        "wanderer-cloak", "rogue-hood", "rogue-cape", "sorcerer-robe", "sorcerer-mantle", "hair",
+    };
+
+    /// <summary>A base body is used only once its whole wardrobe has been made (else a hero would walk in underclothes).</summary>
+    public static bool Dressable(string body) =>
+        Kit.Has(body) && Pieces.All(p => Kit.Has($"wear-{(body == "body-woman" ? "f" : "m")}-{p}"));
 
     /// <summary>
     /// The pieces a hero on a base body wears (only those that have been made): the armour worn, by its base; with no
@@ -751,7 +830,10 @@ public partial class World3D : Node3D
     public static Node3D DropBody(Item it)
     {
         Base b = it.B;
-        Node3D m = Kit.Lying("drop-" + it.Base, "models");
+        // Models made for the floor: a pile of coins for gold, the crimson flask for a healing draught.
+        string floorModel = it.Base switch { "gold" => "gold-pile", "pot-hp" => "potion", _ => "drop-" + it.Base };
+        Node3D m = it.Base == "gold" ? Kit.Prop(floorModel, it.Count > 100 ? 0.55f : 0.4f) : it.Base == "pot-hp" ? Kit.Prop(floorModel, 0.3f) : null;
+        m ??= Kit.Lying("drop-" + it.Base, "models");
         if (m == null && b?.Held != null) m = Kit.Lying("held-" + b.Held, "figures", 1.1f);
         if (m != null) return m;
         float size = b?.Kind switch
@@ -898,8 +980,34 @@ public partial class World3D : Node3D
         }
     }
 
+    /// <summary>A standing ring of light with a veil inside and a light: a way between places.</summary>
+    private static Node3D PortalRing(Color c)
+    {
+        var n = new Node3D();
+        n.AddChild(new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = 0.75f, OuterRadius = 0.95f }, MaterialOverride = Glow(c, 3), RotationDegrees = new Vector3(90, 0, 0), Position = new Vector3(0, 1.1f, 0) });
+        n.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.75f, BottomRadius = 0.75f, Height = 0.02f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(c.R * 0.5f, c.G * 0.5f, c.B * 0.5f, 0.45f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded }, RotationDegrees = new Vector3(90, 0, 0), Position = new Vector3(0, 1.1f, 0) });
+        n.AddChild(new OmniLight3D { LightColor = c, LightEnergy = 2, OmniRange = 5, Position = new Vector3(0, 1.2f, 0) });
+        CpuParticles3D motes = Vfx.Trail(c * 1.6f, c * 0.4f, 0.12f, 30, 1.2f);
+        motes.EmissionSphereRadius = 0.8f;
+        motes.Position = new Vector3(0, 1.1f, 0);
+        n.AddChild(motes);
+        return n;
+    }
+
+    private Node3D _lairPortal;
+
     private void Portal()
     {
+        // A lair's portal, red with embers, where the map was read.
+        bool lair = Game.Lair != null && Game.Lair.FromDepth == Game.Depth;
+        if (lair && _lairPortal == null)
+        {
+            _lairPortal = PortalRing(new Color(1f, 0.3f, 0.12f));
+            _lairPortal.Position = At(Game.Lair.X, Game.Lair.Y);
+            _level.AddChild(_lairPortal);
+        }
+        if (!lair && _lairPortal != null) { _lairPortal.QueueFree(); _lairPortal = null; }
+        if (_lairPortal != null) _lairPortal.Rotation = new Vector3(0, -(float)_clock * 0.6f, 0);
         bool want = Game.Depth == 0 && Game.PortalDepth > 0;
         if (want && _portal == null)
         {
@@ -1086,6 +1194,11 @@ public partial class World3D : Node3D
                 Vfx.Burst(_dyn, At(Game.Me.X, Game.Me.Y, 0.3f), new Color(1f, 0.9f, 0.5f) * 2f, new Color(1f, 0.6f, 0.2f), 60, 1.5f, 3.5f, 0.15f, 1.4f, new Vector3(0, 0.5f, 0), 20, Vector3.Up, true, Vfx.Shard, 0.8f);
                 break;
             }
+            case "lairportal":
+                Ring(at, 3, new Color(1f, 0.35f, 0.12f), 0.7f, 0.2f);
+                Vfx.Burst(_dyn, at + new Vector3(0, 1.1f, 0), new Color(1f, 0.6f, 0.3f) * 2f, new Color(0.8f, 0.15f, 0.05f), 60, 1, 4, 0.25f, 0.9f, Vector3.Zero, 180, null, true, Vfx.Shard, 0.5f);
+                Flash(at + new Vector3(0, 1.2f, 0), new Color(1f, 0.35f, 0.12f), 6, 8, 0.7f);
+                break;
             case "waystone" or "portal":
                 Ring(e.Kind == "portal" ? at : At(Game.Me.X, Game.Me.Y), 3, new Color(0.4f, 0.6f, 1f), 0.6f, 0.2f);
                 break;
@@ -1149,6 +1262,7 @@ public partial class World3D : Node3D
     /// <summary>A number rising from a struck figure (damage in white, a critical in gold, the hero's wounds in red).</summary>
     private void Number(Ev e)
     {
+        if (!Profile.Current.DamageNumbers) return;
         string text = e.Kind switch { "miss" => "miss", "block" => "block", "dodge" => "dodge", _ => e.V.ToString() };
         Color c = e.Kind switch
         {
@@ -1225,6 +1339,7 @@ public partial class World3D : Node3D
     public int PropAt(double x, double y)
     {
         if (Game.Depth == 0 && Game.PortalDepth > 0 && Game.Dist(x, y, Game.PortalSpot.x, Game.PortalSpot.y) < 1.1) return -2;
+        if (Game.Lair != null && Game.Lair.FromDepth == Game.Depth && Game.Dist(x, y, Game.Lair.X, Game.Lair.Y) < 1.1) return -3;
         foreach (Prop p in Game.Map.Props)
         {
             if (!p.Usable || p.OneUse && Game.Here.Opened.Contains(p.Id)) continue;
@@ -1244,9 +1359,25 @@ void fragment() {
     ALBEDO = tint * (rim * 0.9 + 0.06) * glow;
 }";
 
+    private const string GroundShader = @"
+shader_type spatial;
+uniform sampler2D seen : filter_linear;
+uniform vec2 size = vec2(64.0);
+uniform float fog = 1.0;
+varying vec3 wpos;
+void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
+void fragment() {
+    float s = fog > 0.5 ? texture(seen, wpos.xz / size).r : 1.0;
+    ALBEDO = COLOR.rgb * mix(0.05, 1.0, s);
+    ROUGHNESS = 0.95;
+}";
+
     private const string WallShader = @"
 shader_type spatial;
 render_mode cull_back;
+uniform sampler2D seen : filter_linear;
+uniform vec2 size = vec2(64.0);
+uniform float fog = 1.0;
 uniform vec3 hero_pos;
 uniform vec3 cam_pos;
 uniform float cut = 1.0;
@@ -1254,7 +1385,9 @@ uniform float radius = 2.8;
 varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-    ALBEDO = COLOR.rgb;
+    // A wall is seen once the cell in front of its face is: sample half a metre toward the camera's side.
+    float s = fog > 0.5 ? max(texture(seen, wpos.xz / size).r, texture(seen, (wpos.xz + vec2(0.5)) / size).r) : 1.0;
+    ALBEDO = COLOR.rgb * mix(0.05, 1.0, s);
     ROUGHNESS = 0.95;
     if (cut > 0.5 && wpos.y > 0.3) {
         vec3 d = hero_pos - cam_pos;

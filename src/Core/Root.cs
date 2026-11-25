@@ -21,7 +21,9 @@ public partial class Root : Node
     public override void _Ready()
     {
         Instance = this;
-        Data.BaseBodies = name => Kit.Has(name);
+        Data.BaseBodies = World3D.Dressable;
+        // The treasure map's icon, once assetgen has made one on a dark background (cut out cleanly on the floor).
+        if (FileAccess.FileExists("res://assets/icons/map.png")) Base.MapIcon = "map";
         GetWindow().Title = ProjectSettings.GetSetting("application/config/name").AsString();
         string[] args = OS.GetCmdlineUserArgs();
         bool check = Array.IndexOf(args, "--check") >= 0, shots = Array.IndexOf(args, "--shots") >= 0, agent = Array.IndexOf(args, "--agent") >= 0;

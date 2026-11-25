@@ -44,7 +44,7 @@ public partial class SelfCheck
         foreach (bool female in new[] { false, true })
         {
             string body = female ? "body-woman" : "body-man";
-            if (!Kit.Has(body)) continue;
+            if (!World3D.Dressable(body)) continue;
             Hero h = Hero.New(Cls.Wanderer, female);
             Check(Data.HeroBody(h) == body, $"a {(female ? "woman" : "man")} hero stands on {body}");
             var fig = new Figure3D(body, 1.8f);

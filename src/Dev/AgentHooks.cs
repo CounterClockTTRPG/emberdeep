@@ -92,11 +92,12 @@ public static class AgentHooks
             await agent.Frames(1);
             return $"going for {drop.Item.Title}";
         });
-        agent.Command("use", "use ID|down|up|waystone|chest|crate|barrel|urn|stash|well|portal   walk to a thing and use it", async a =>
+        agent.Command("use", "use ID|down|up|exit|waystone|chest|crate|barrel|urn|shrine|stash|well|portal|lair   walk to a thing and use it", async a =>
         {
             Game g = G();
             int id;
             if (a[1] == "portal") id = -2;
+            else if (a[1] == "lair") id = -3;
             else if (int.TryParse(a[1], out int n)) id = n;
             else id = g.Map.Props.Where(p => p.Kind == a[1] && !(p.OneUse && g.Here.Opened.Contains(p.Id)))
                 .OrderBy(p => Game.Dist(p.X, p.Y, g.Me.X, g.Me.Y)).FirstOrDefault()?.Id ?? throw new Exception($"no {a[1]} here");
@@ -216,7 +217,8 @@ public static class AgentHooks
         {
             Game g = G();
             Rarity r = a.Length > 2 && Enum.TryParse(a[2], true, out Rarity rr) ? rr : Rarity.Plain;
-            Item it = Data.BaseOf(a[1])?.Wearable == true ? Loot.Make(a[1], r, a.Length > 3 ? AgentServer.Int(a[3]) : g.Hero.Level, g.R()) : new Item(a[1]);
+            int lvl = a.Length > 3 ? AgentServer.Int(a[3]) : g.Hero.Level;
+            Item it = a[1] == "treasure-map" ? Loot.Map(lvl + 2, g.R()) : Data.BaseOf(a[1])?.Wearable == true ? Loot.Make(a[1], r, lvl, g.R()) : new Item(a[1]);
             if (it.B == null) throw new Exception("no such base");
             if (!g.Hero.Take(it)) throw new Exception("no room");
             S().Refresh();

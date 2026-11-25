@@ -429,6 +429,16 @@ public partial class Figure3D : Node3D
 
     public string Clip => _clip;
 
+    /// <summary>A glow laid over the whole figure and what it holds (under the cursor), or none.</summary>
+    public void Overlay(Material m, float strength)
+    {
+        foreach (MeshInstance3D mi in FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>())
+        {
+            mi.MaterialOverlay = m;
+            if (m != null) mi.SetInstanceShaderParameter("glow", strength);
+        }
+    }
+
     /// <summary>Tint every surface (a champion's red, a shade's pallor, a hidden rogue's smoke).</summary>
     public void Tint(Color c, float alpha = 1)
     {
