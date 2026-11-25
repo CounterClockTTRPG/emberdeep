@@ -35,7 +35,7 @@ public partial class GameScreen : Control
     private string _banner;
     private double _bannerT;
     private HBoxContainer _belt, _skills;
-    private Button _charB, _skillB, _invB;
+    private BandButton _charB, _skillB, _invB;
     private int _beltSig = -1;
     private string _skillSig;
     /// <summary>The pack place of a gem picked up to be set in a socket (-1: none).</summary>
@@ -95,25 +95,30 @@ public partial class GameScreen : Control
 
     // ---- the band at the bottom: belt, skills, panel buttons --------------------------------------------------------
 
+    /// <summary>
+    /// The band's parts, laid out from the edges in (so a narrow screen, a phone's, still fits): the belt after the
+    /// life globe, the panel buttons before the mana globe, the skills between.
+    /// </summary>
     private void BuildBand()
     {
         _belt = UITheme.H(6);
         AddChild(_belt);
-        UITheme.Anchor(_belt, 0.5f, 1, 0.5f, 1, -470, -Band + 28, -230, -Band + 90);
+        UITheme.Anchor(_belt, 0, 1, 0, 1, 186, -Band + 30, 186 + 4 * 56 + 18, -Band + 86);
         _skills = UITheme.H(6);
         AddChild(_skills);
-        UITheme.Anchor(_skills, 0.5f, 1, 0.5f, 1, -190, -Band + 22, 300, -Band + 96);
+        UITheme.Anchor(_skills, 0.5f, 1, 0.5f, 1, -209, -Band + 24, 209, -Band + 94);
+        _skills.Alignment = BoxContainer.AlignmentMode.Center;
         var buttons = UITheme.H(6);
         AddChild(buttons);
-        UITheme.Anchor(buttons, 0.5f, 1, 0.5f, 1, 330, -Band + 34, 600, -Band + 78);
-        _charB = UITheme.B("Char", () => Toggle("left", "character"), 15, "Character (C)");
-        _invB = UITheme.B("Pack", () => Toggle("right", "inventory"), 15, "Inventory (I)");
-        _skillB = UITheme.B("Skills", () => Toggle("left", "skills"), 15, "Skills (S)");
+        UITheme.Anchor(buttons, 1, 1, 1, 1, -186 - 5 * 50 - 24, -Band + 34, -186, -Band + 84);
+        _charB = new BandButton("ui-character", "iron-helm", "Character (C)", () => Toggle("left", "character"));
+        _invB = new BandButton("ui-pack", "leather-armour", "Inventory (I)", () => Toggle("right", "inventory"));
+        _skillB = new BandButton("ui-skills", "skill-arcane", "Skills (S)", () => Toggle("left", "skills"));
         buttons.AddChild(_charB);
         buttons.AddChild(_invB);
         buttons.AddChild(_skillB);
-        buttons.AddChild(UITheme.B("Map", () => _bigMap = !_bigMap, 15, "Map (Tab)"));
-        buttons.AddChild(UITheme.B("Menu", () => Toggle("centre", "menu"), 15, "Menu (Esc)"));
+        buttons.AddChild(new BandButton("ui-map", "scroll", "Map (Tab)", () => _bigMap = !_bigMap));
+        buttons.AddChild(new BandButton("ui-menu", "gauntlets", "Menu (Esc)", () => Toggle("centre", "menu")));
     }
 
     private void RefreshBand()
@@ -167,8 +172,11 @@ public partial class GameScreen : Control
                 });
             }
         }
-        _charB.Text = h.AttrPoints > 0 ? "Char +" : "Char";
-        _skillB.Text = h.SkillPoints > 0 ? "Skills +" : "Skills";
+        _charB.Badge = h.AttrPoints > 0;
+        _skillB.Badge = h.SkillPoints > 0;
+        _charB.Lit = LeftPanel == "character";
+        _skillB.Lit = LeftPanel == "skills";
+        _invB.Lit = RightPanel == "inventory";
     }
 
     public static string SkillName(string id) => id == "attack" || id == null ? "Attack" : Data.Skill(id)?.Name ?? id;
@@ -367,6 +375,27 @@ public partial class GameScreen : Control
                 TalkText = "Sit, let me see those wounds. There. Whole again, or near enough. Do you need draughts for the dark?";
                 Sounds.Play("potion", 0.5f);
                 break;
+            case "peddler":
+                TalkText = "Tobin Hale, at your service, and at your purse. Maps, friend: dead men's maps, to places the deep keeps to itself. And pretty stones for your sword.";
+                break;
+            case "priest":
+                TalkText = Game.Hero.Level < 5 ? "The fire below is no god, whatever the cultists say. But a blessing never hurt anyone. For a gift to the chapel, of course."
+                    : "Back from the dark again. Kneel, and take what strength the hearth can spare you. The chapel's roof will not mend itself.";
+                break;
+            case "guard":
+            {
+                string[] tips =
+                {
+                    "Stand back from the fire-touched ones when they fall. They burst like a kiln.",
+                    "If you find a map on a dead thing, Tobin will tell you it is worth nothing. Then he will try to buy it.",
+                    "The deep fills again if you leave it a while. My father said it breathes.",
+                    "Hags poison. Shades freeze. Imps burn. Brutes knock you on your back. None of them pay.",
+                    "Touch every waystone you pass. The walk back up is long.",
+                    "The elder says the Warden is the bottom. The elder has never been past the second floor.",
+                };
+                TalkText = tips[(int)(Game.Time / 7) % tips.Length];
+                break;
+            }
             default:
                 TalkText = Game.Hero.Level < 3 ? "New blade? Old blade? I've got both, and I'll buy what you drag up from the graves."
                     : "Back again. Show me what the deep gave you; I'll pay fair, mostly.";
@@ -406,10 +435,62 @@ public partial class GameScreen : Control
         return false;
     }
 
+    private readonly Dictionary<int, Vector2> _touches = new();
+    private float _pinchFrom, _zoomFrom, _twistFrom, _yawFrom;
+    private bool _turning;
+
+    /// <summary>
+    /// Two fingers pinch the camera in and out (a touchpad's pinch too); the second finger down drops whatever the
+    /// first had started, so a pinch never walks the hero off.
+    /// </summary>
+    public override void _Input(InputEvent e)
+    {
+        switch (e)
+        {
+            case InputEventScreenTouch t:
+                if (t.Pressed) _touches[t.Index] = t.Position; else _touches.Remove(t.Index);
+                if (_touches.Count == 2)
+                {
+                    var two = _touches.Values.ToArray();
+                    _pinchFrom = Math.Max(10, two[0].DistanceTo(two[1]));
+                    _zoomFrom = World.Zoom;
+                    _twistFrom = (two[1] - two[0]).Angle();
+                    _yawFrom = World.YawTarget;
+                    _lmb = _lmbMove = _rmb = false;
+                    Game.Halt();
+                }
+                break;
+            case InputEventScreenDrag d when _touches.ContainsKey(d.Index):
+                _touches[d.Index] = d.Position;
+                if (_touches.Count == 2)
+                {
+                    var two = _touches.Values.ToArray();
+                    World.Zoom = Mathf.Clamp(_zoomFrom * _pinchFrom / Math.Max(10, two[0].DistanceTo(two[1])), 0.45f, 1.6f);
+                    // Twisting the two fingers turns the view with them.
+                    World.YawTarget = World.Yaw = _yawFrom - Mathf.AngleDifference(_twistFrom, (two[1] - two[0]).Angle());
+                    GetViewport().SetInputAsHandled();
+                }
+                break;
+            case InputEventMagnifyGesture mg:
+                World.Zoom = Mathf.Clamp(World.Zoom / mg.Factor, 0.45f, 1.6f);
+                break;
+        }
+    }
+
     public override void _GuiInput(InputEvent e)
     {
+        // A second finger on the screen: a pinch, not a click.
+        if (_touches.Count >= 2 && e is InputEventMouseButton or InputEventMouseMotion) { AcceptEvent(); return; }
+        // The middle button held: drag to turn the view round the hero.
+        if (e is InputEventMouseMotion mm && _turning)
+        {
+            World.YawTarget = World.Yaw -= mm.Relative.X * 0.008f;
+            AcceptEvent();
+            return;
+        }
         if (e is InputEventMouseButton mb)
         {
+            if (mb.ButtonIndex == MouseButton.Middle) { _turning = mb.Pressed; AcceptEvent(); return; }
             if (mb.ButtonIndex == MouseButton.WheelUp && mb.Pressed) { World.Zoom = Mathf.Max(0.55f, World.Zoom - 0.08f); return; }
             if (mb.ButtonIndex == MouseButton.WheelDown && mb.Pressed) { World.Zoom = Mathf.Min(1.5f, World.Zoom + 0.08f); return; }
             if (mb.ButtonIndex == MouseButton.Left && _skillTaps)
@@ -510,6 +591,9 @@ public partial class GameScreen : Control
             case Key.C or Key.A: Toggle("left", "character"); break;
             case Key.S or Key.K: Toggle("left", "skills"); break;
             case Key.Tab or Key.M: _bigMap = !_bigMap; break;
+            case Key.Bracketleft: World.YawTarget += Mathf.Pi / 4; break;
+            case Key.Bracketright: World.YawTarget -= Mathf.Pi / 4; break;
+            case Key.Backspace: World.YawTarget = 0; break;
             case Key.Key1 or Key.Key2 or Key.Key3 or Key.Key4: UseBelt((int)(k.Keycode - Key.Key1)); break;
             case Key.Q or Key.W or Key.E or Key.R or Key.T:
             {
@@ -536,19 +620,10 @@ public partial class GameScreen : Control
     {
         Vector2 size = Size;
         Font font = UITheme.Body;
-        // The band: dark stone with an ember edge.
-        _hud.DrawRect(new Rect2(0, size.Y - Band, size.X, Band), new Color(0.06f, 0.05f, 0.05f, 0.94f));
-        _hud.DrawRect(new Rect2(0, size.Y - Band, size.X, 2), new Color(0.55f, 0.25f, 0.1f));
         Hero h = Game.Hero;
         Actor me = Game.Me;
-        Globe(new Vector2(92, size.Y - 74), 74, me.Life / Math.Max(1, me.MaxLife), new Color(0.75f, 0.1f, 0.08f), $"{Math.Ceiling(me.Life)}/{Math.Round(me.MaxLife)}");
-        Globe(new Vector2(size.X - 92, size.Y - 74), 74, me.Mana / Math.Max(1, me.MaxMana), new Color(0.15f, 0.25f, 0.85f), $"{Math.Floor(me.Mana)}/{Math.Round(me.MaxMana)}");
-        // Experience, a thin bar along the top of the band.
-        float x0 = 190, x1 = size.X - 190;
-        double frac = h.Level >= Data.MaxLevel ? 1 : h.Xp / (double)Data.XpToNext(h.Level);
-        _hud.DrawRect(new Rect2(x0, size.Y - Band + 8, x1 - x0, 7), new Color(0.12f, 0.1f, 0.08f));
-        _hud.DrawRect(new Rect2(x0, size.Y - Band + 8, (float)((x1 - x0) * frac), 7), new Color(0.85f, 0.65f, 0.25f));
-        _hud.DrawString(font, new Vector2(x0, size.Y - 10), $"Level {h.Level} {h.Class}   {h.Gold} gold   {Game.PlaceName}", HorizontalAlignment.Left, -1, 15, UITheme.Dim);
+        Footer(size, font, h, me);
+        float x0 = 186, x1 = size.X - 186;
         string ails = string.Join(", ", me.Ailments());
         if (ails.Length > 0) _hud.DrawString(font, new Vector2(30, size.Y - 160), char.ToUpper(ails[0]) + ails[1..], HorizontalAlignment.Left, -1, 16, me.Burn > 0 ? new Color(1f, 0.55f, 0.2f) : me.Poison > 0 ? new Color(0.55f, 1f, 0.35f) : new Color(0.6f, 0.8f, 1f));
         if (me.ShieldT > 0) _hud.DrawString(font, new Vector2(x1 - 220, size.Y - 10), $"Arcane shield {me.Shield:0}", HorizontalAlignment.Left, -1, 15, new Color(0.5f, 0.7f, 1f));
@@ -592,10 +667,64 @@ public partial class GameScreen : Control
         else if (RightPanel == "") Map(new Rect2(size.X - 214, 14, 200, 200), 3.2f, false);
     }
 
+    /// <summary>
+    /// The footer: a slab of dark stone with an iron rim and an ember glow along its top edge, recessed trays for the
+    /// belt and the skills, the experience bar as a segmented ember channel, the globes in carved stone rings.
+    /// </summary>
+    private void Footer(Vector2 size, Font font, Hero h, Actor me)
+    {
+        float top = size.Y - Band;
+        // The stone: darker toward the bottom, a glow rising from the rim.
+        for (int k = 0; k < 8; k++)
+        {
+            float t = k / 8f;
+            _hud.DrawRect(new Rect2(0, top + Band * t, size.X, Band / 8f + 1), UITheme.Char.Lerp(UITheme.Soot, t) with { A = 0.97f });
+        }
+        for (int k = 0; k < 10; k++) _hud.DrawRect(new Rect2(0, top - 10 + k, size.X, 1), UITheme.Ember with { A = 0.015f * k });
+        _hud.DrawRect(new Rect2(0, top, size.X, 3), UITheme.Rust);
+        _hud.DrawRect(new Rect2(0, top, size.X, 1), UITheme.Ember with { A = 0.8f });
+        // Rivets along the rim.
+        for (float x = 30; x < size.X; x += 120) _hud.DrawCircle(new Vector2(x, top + 6), 2.2f, UITheme.EdgeLit);
+        // Recessed trays behind the belt and the skills (the controls themselves sit on them).
+        Tray(_belt);
+        Tray(_skills);
+        // Experience: a channel along the top, filled with ember, cut into tenths.
+        float x0 = 186, x1 = size.X - 186, ey = top + 10;
+        double frac = h.Level >= Data.MaxLevel ? 1 : h.Xp / (double)Data.XpToNext(h.Level);
+        _hud.DrawRect(new Rect2(x0, ey, x1 - x0, 8), UITheme.Soot);
+        _hud.DrawRect(new Rect2(x0, ey, (float)((x1 - x0) * frac), 8), UITheme.Ember.Darkened(0.15f));
+        _hud.DrawRect(new Rect2(x0, ey, (float)((x1 - x0) * frac), 3), UITheme.Ember.Lightened(0.25f));
+        for (int k = 1; k < 10; k++) _hud.DrawRect(new Rect2(x0 + (x1 - x0) * k / 10f, ey, 1, 8), UITheme.Soot);
+        _hud.DrawRect(new Rect2(x0, ey, x1 - x0, 8), UITheme.Edge, false, 1);
+        // Level by the life globe, gold by the belt, the place by the mana globe.
+        _hud.DrawString(UITheme.Title, new Vector2(x0, size.Y - 8), $"Level {h.Level}", HorizontalAlignment.Left, -1, 17, UITheme.Bone);
+        Texture2D coin = Kit.Icon("gold");
+        if (coin != null) _hud.DrawTextureRect(coin, new Rect2(x0 + 80, size.Y - 26, 20, 20), false);
+        _hud.DrawString(font, new Vector2(x0 + 104, size.Y - 10), h.Gold.ToString(), HorizontalAlignment.Left, -1, 15, new Color(0.95f, 0.8f, 0.35f));
+        _hud.DrawString(UITheme.Title, new Vector2(x1 - 400, size.Y - 8), Game.PlaceName, HorizontalAlignment.Right, 400, 15, UITheme.Ash);
+        Globe(new Vector2(92, size.Y - 74), 74, me.Life / Math.Max(1, me.MaxLife), new Color(0.72f, 0.08f, 0.07f), $"{Math.Ceiling(me.Life)}/{Math.Round(me.MaxLife)}");
+        Globe(new Vector2(size.X - 92, size.Y - 74), 74, me.Mana / Math.Max(1, me.MaxMana), new Color(0.14f, 0.24f, 0.82f), $"{Math.Floor(me.Mana)}/{Math.Round(me.MaxMana)}");
+    }
+
+    /// <summary>A sunken tray under a row of controls: darker than the stone, a shadow along its top edge.</summary>
+    private void Tray(Control row)
+    {
+        if (row == null || row.GetChildCount() == 0) return;
+        Rect2 r = row.GetRect().Grow(5);
+        var sb = new StyleBoxFlat { BgColor = new Color(0.035f, 0.028f, 0.025f, 0.95f), BorderColor = UITheme.Edge, ShadowColor = new Color(0, 0, 0, 0.5f), ShadowSize = 4 };
+        sb.SetBorderWidthAll(1);
+        sb.SetCornerRadiusAll(4);
+        _hud.DrawStyleBox(sb, r);
+        _hud.DrawRect(new Rect2(r.Position + new Vector2(2, 1), new Vector2(r.Size.X - 4, 2)), new Color(0, 0, 0, 0.6f));
+    }
+
     private void Globe(Vector2 c, float r, double frac, Color fill, string text)
     {
-        _hud.DrawCircle(c, r + 4, new Color(0.2f, 0.15f, 0.12f));
-        _hud.DrawCircle(c, r, new Color(0.05f, 0.04f, 0.04f));
+        // A carved ring of stone: dark, an iron edge, a lighter lip catching the ember light from above.
+        _hud.DrawCircle(c, r + 10, UITheme.Soot);
+        _hud.DrawArc(c, r + 7, 0, Mathf.Tau, 64, UITheme.Char.Lightened(0.08f), 6);
+        _hud.DrawArc(c, r + 7, Mathf.Pi * 1.1f, Mathf.Pi * 1.9f, 32, UITheme.Ember with { A = 0.35f }, 2);
+        _hud.DrawCircle(c, r, new Color(0.03f, 0.025f, 0.025f));
         float level = (float)Math.Clamp(frac, 0, 1);
         // The liquid: the part of the circle below its level.
         var pts = new List<Vector2>();
@@ -621,9 +750,19 @@ public partial class GameScreen : Control
             if (poly.Count >= 3)
                 try { _hud.DrawColoredPolygon(poly.ToArray(), fill); } catch (Exception) { }
         }
-        _hud.DrawCircle(c + new Vector2(-r * 0.35f, -r * 0.4f), r * 0.18f, new Color(1, 1, 1, 0.12f));
-        _hud.DrawArc(c, r + 2, 0, Mathf.Tau, 48, new Color(0.45f, 0.3f, 0.15f), 3);
-        _hud.DrawString(UITheme.Body, c + new Vector2(-r, 6), text, HorizontalAlignment.Center, 2 * r, 16, UITheme.Text);
+        if (level > 0.01f && level < 0.995f)
+        {
+            // The liquid's surface: a brighter line, gently moving.
+            float half = Mathf.Sqrt(Math.Max(0, r * r - (top - c.Y) * (top - c.Y)));
+            float wob = Mathf.Sin((float)Game.Time * 2.2f) * 1.5f;
+            _hud.DrawLine(new Vector2(c.X - half + 2, top + wob), new Vector2(c.X + half - 2, top - wob), fill.Lightened(0.45f), 2);
+        }
+        // Glass: a highlight and a darker rim inside.
+        _hud.DrawCircle(c + new Vector2(-r * 0.32f, -r * 0.42f), r * 0.2f, new Color(1, 1, 1, 0.1f));
+        _hud.DrawCircle(c + new Vector2(-r * 0.4f, -r * 0.5f), r * 0.07f, new Color(1, 1, 1, 0.25f));
+        _hud.DrawArc(c, r - 1, 0, Mathf.Tau, 64, new Color(0, 0, 0, 0.6f), 3);
+        _hud.DrawArc(c, r + 2, 0, Mathf.Tau, 64, UITheme.Rust, 2);
+        _hud.DrawString(UITheme.Body, c + new Vector2(-r, 6), text, HorizontalAlignment.Center, 2 * r, 17, UITheme.Bone);
     }
 
     private Image _mapImg;

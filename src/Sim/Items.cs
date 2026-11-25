@@ -286,6 +286,20 @@ public static class Loot
         return list;
     }
 
+    /// <summary>The peddler's wares: two treasure maps, four gems, two rings or amulets, new each time back in the village.</summary>
+    public static List<Item> PeddlerStock(int level, Rng r)
+    {
+        var list = new List<Item> { Map(level, r), Map(level + 2, r) };
+        for (int k = 0; k < 4; k++)
+        {
+            int grade = level < 10 ? 0 : level < 25 ? (r.Chance(0.7) ? 1 : 0) : (r.Chance(0.4) ? 2 : 1);
+            list.Add(Item.Gem(Data.Gems[r.Int(0, Data.Gems.Length)].Id, grade));
+        }
+        list.Add(Make(r.Chance(0.5) ? "ring" : "amulet", Rarity.Magic, level, r));
+        list.Add(Make(r.Chance(0.5) ? "ring" : "amulet", r.Chance(0.3) ? Rarity.Rare : Rarity.Magic, level, r));
+        return list;
+    }
+
     /// <summary>The healer's wares: always the same.</summary>
     public static List<Item> HealerStock() => new() { new Item("pot-hp"), new Item("pot-mp"), new Item("scroll") };
 }

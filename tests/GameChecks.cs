@@ -245,7 +245,13 @@ public partial class SelfCheck
     {
         Game g = Game.New(4, Cls.Wanderer);
         Eq(g.Depth, 0, "a new game starts in the village");
-        Check(g.Here.Actors.Count(a => a.Npc) == 3, "the elder, the healer and the smith");
+        Check(g.Here.Actors.Count(a => a.Npc) == 6, "the elder, the healer, the smith, the peddler, the priest, the watchman");
+        Check(g.PeddlerWares.Count(i => i.B.Kind == Kind.Map) == 2 && g.PeddlerWares.Any(i => i.B.Kind == Kind.Gem), "the peddler sells maps and gems");
+        g.Hero.Gold = 100000;
+        Item pmap = g.PeddlerWares[0];
+        Check(g.Buy("peddler", 0) == null && g.Hero.Pack.Contains(pmap) && !g.PeddlerWares.Contains(pmap), "a map bought leaves the shelf");
+        Check(g.Bless("iron") == null && g.Hero.Blessing == "iron" && g.Hero.BlessingLeft == 300, "Brother Aldric blesses for gold");
+        g.Hero.Gold = 0; g.Hero.Blessing = null; g.Hero.BlessingLeft = 0;
         string first = g.TalkElder();
         Check(g.Hero.Quests["hag"] == 1 && first.Contains("hag"), "the elder sends the hero after the hag");
         g.Hero.Quests["hag"] = 2;
@@ -311,6 +317,7 @@ public partial class SelfCheck
         int drops = g.Here.Drops.Count;
         g.Use(chest);
         Check(g.Here.Opened.Contains(chest.Id) && g.Here.Drops.Count == drops, "a chest opens once");
+        Check(Floor.Make(3, 2).Props.Count(p => p.Kind == "torch") >= 5 && Floor.Make(3, 2).Props.Where(p => p.Kind == "torch").All(p => !p.Blocks), "torches on the walls, in no one's way");
         Check(Floor.Make(3, 2).Props.Any(p => p.Kind is "urn" or "barrel") && Floor.Make(3, 4).Props.Any(p => p.Model is "bone-pile" or "candelabra" or "gibbet-cage"), "floors have things to break and things to look at");
         Check(Floor.Make(3, 1).Props.Where(p => p.Model is "tomb" or "pillar" or "gravestone" or "bone-pile").All(p => !p.Usable), "tombs, pillars, gravestones and bones are only to look at");
     }
@@ -479,8 +486,8 @@ public partial class SelfCheck
         t.Awake = true;
         Run(g, 0.5);
         Check(t.Act != "attack" && t.Act != "walk", "frozen, it does nothing");
-        // A hag's blow poisons the hero.
-        g = Bare(Cls.Wanderer, 4);
+        // A hag's blow poisons the hero (a sorcerer: no shield to block it with).
+        g = Bare(Cls.Sorcerer, 4);
         Actor hag = Beside(g, "hag");
         hag.Accuracy = 1e6;
         var hit = typeof(Game).GetMethod("HurtHero", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);

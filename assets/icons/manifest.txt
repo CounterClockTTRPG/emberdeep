@@ -60,5 +60,10 @@ skill-warcry icon-skill-warcry-db7b85
 spiked-club icon-spiked-club-fafba7
 tower-shield icon-tower-shield-a08b7c
 treasure-map icon-treasure-map-c031a9
+ui-character icon-ui-character-616625
+ui-map icon-ui-map-cd9293
+ui-menu icon-ui-menu-f4d610
+ui-pack icon-ui-pack-fd7fa7
+ui-skills icon-ui-skills-6db915
 war-axe icon-war-axe-c91eba
 war-bow icon-war-bow-5c657f

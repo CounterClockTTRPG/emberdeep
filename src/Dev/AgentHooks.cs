@@ -105,7 +105,7 @@ public static class AgentHooks
             await agent.Frames(1);
             return $"going to use {a[1]}";
         });
-        agent.Command("talk", "talk elder|healer|smith   walk to a village folk and talk", async a =>
+        agent.Command("talk", "talk elder|healer|smith|peddler|priest|guard   walk to a village folk and talk", async a =>
         {
             Game g = G();
             Actor n = g.Here.Actors.FirstOrDefault(x => x.Npc && x.Def == a[1]) ?? throw new Exception("no one by that name here");
@@ -113,7 +113,7 @@ public static class AgentHooks
             await agent.Frames(1);
             return $"going to {a[1]}";
         });
-        agent.Command("trade", "trade smith|healer|stash   open the trade (or the stash) at once (debug: from anywhere)", async a =>
+        agent.Command("trade", "trade smith|healer|peddler|stash   open the trade (or the stash) at once (debug: from anywhere)", async a =>
         {
             GameScreen s = S();
             s.CloseAll();
@@ -124,7 +124,7 @@ public static class AgentHooks
             await agent.Frames(2);
             return Wares(G(), a[1]);
         });
-        agent.Command("buy", "buy smith|healer N    buy ware N (see trade)", async a =>
+        agent.Command("buy", "buy smith|healer|peddler N    buy ware N (see trade)", async a =>
         {
             string why = G().Buy(a[1], AgentServer.Int(a[2]));
             S().Refresh();
@@ -269,7 +269,7 @@ public static class AgentHooks
     private static string Wares(Game g, string from)
     {
         if (from == "stash") return "stash: " + string.Join(", ", g.Hero.Stash.Select((it, i) => $"{i}:{it.Title}"));
-        var list = from == "healer" ? Loot.HealerStock() : g.SmithWares;
+        var list = from == "healer" ? Loot.HealerStock() : from == "peddler" ? g.PeddlerWares : g.SmithWares;
         return string.Join("\n", list.Select((it, i) => $"  {i}: {it.Title} ({it.Rarity}) {Game.Price(it)} gold{(it.Mods.Count > 0 ? " -- " + string.Join(", ", it.Lines().Skip(1)) : "")}"));
     }
 

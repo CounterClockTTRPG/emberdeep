@@ -162,7 +162,7 @@ public sealed partial class Game
     /// <summary>The waystone scroll's way back: the floor and place it was read, or depth 0 for none.</summary>
     public int PortalDepth;
     public double PortalX, PortalY;
-    public List<Item> SmithWares = new();
+    public List<Item> SmithWares = new(), PeddlerWares = new();
     public bool Won;
     public double Accum;
 
@@ -279,7 +279,7 @@ public sealed partial class Game
         st.Missiles.Clear();
         st.Zones.Clear();
         if (Depth > Hero.Deepest && Depth < Data.LairBase) Hero.Deepest = Depth;
-        if (Depth == 0) SmithWares = Loot.SmithStock(Hero.Level, R());
+        if (Depth == 0) { SmithWares = Loot.SmithStock(Hero.Level, R()); PeddlerWares = Loot.PeddlerStock(LevelOf(Math.Max(1, Hero.Deepest)) + 2, R()); }
         Reveal();
         Emit(new Ev { Kind = "enter", V = Depth, Text = f.Def.Name });
     }
@@ -1584,10 +1584,11 @@ public sealed partial class Game
     public string Buy(string from, int index)
     {
         Item it;
-        if (from == "smith")
+        List<Item> unique = from == "smith" ? SmithWares : from == "peddler" ? PeddlerWares : null;
+        if (unique != null)
         {
-            if (index < 0 || index >= SmithWares.Count) return "no such ware";
-            it = SmithWares[index];
+            if (index < 0 || index >= unique.Count) return "no such ware";
+            it = unique[index];
         }
         else
         {
@@ -1597,14 +1598,40 @@ public sealed partial class Game
         }
         int price = Price(it);
         if (Hero.Gold < price) return "not enough gold";
-        if (it.B.Wearable ? Hero.Free() == 0 : !Hero.Take(new Item(it.Base))) return "no room";
-        if (it.B.Wearable) { Hero.Take(it); SmithWares.RemoveAt(index); }
+        if (unique != null)
+        {
+            // One of a kind (a sword, a map, a gem): it leaves the shelf.
+            if (Hero.Free() == 0) return "no room";
+            Hero.Take(it);
+            unique.RemoveAt(index);
+        }
+        else if (!Hero.Take(new Item(it.Base))) return "no room";
         Hero.Gold -= price;
         Emit(new Ev { Kind = "gold", V = -price, Text = $"Bought {it.Name}" });
         return null;
     }
 
-    public static int Price(Item it) => it.B.Stacks ? it.B.Price : Math.Max(5, it.Worth * 4);
+    public static int Price(Item it) => it.B.Stacks ? it.B.Price
+        : it.B.Kind == Kind.Map ? 800 + it.Level * 60
+        : it.B.Kind == Kind.Gem ? new[] { 150, 500, 1500 }[Math.Clamp(it.Grade, 0, 2)]
+        : Math.Max(5, it.Worth * 4);
+
+    /// <summary>What Brother Aldric asks for a blessing: more the stronger the hero, more again deeper.</summary>
+    public int BlessingCost => 60 * Hero.Level * (1 + Tier);
+
+    /// <summary>Brother Aldric blesses the hero as a shrine would, for five minutes, for gold. Null when done.</summary>
+    public string Bless(string id)
+    {
+        var sh = Data.Shrines.FirstOrDefault(x => x.id == id);
+        if (sh.id == null || sh.seconds <= 0) return "no such blessing";
+        if (Hero.Gold < BlessingCost) return "not enough gold";
+        Hero.Gold -= BlessingCost;
+        Hero.Blessing = id;
+        Hero.BlessingLeft = 300;
+        Hero.Changed();
+        Emit(new Ev { Kind = "shrine", X = Me.X, Y = Me.Y, A = -1, Text = $"{sh.name.Replace("Shrine", "Blessing")}: {sh.about}" });
+        return null;
+    }
 
     /// <summary>Move a pack item to the stash, or back (index into the stash).</summary>
     public string ToStash(int place)

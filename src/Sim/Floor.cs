@@ -249,7 +249,19 @@ public sealed class Floor
         ("elder", VillageSize / 2 + 2.5, VillageSize / 2 - 1.5),
         ("healer", 12.5, 29.5),
         ("smith", VillageSize - 12.5, 15.5),
+        ("peddler", VillageSize / 2 + 4.5, VillageSize - 12.5),
+        ("priest", VillageSize - 11.5, VillageSize - 10.5),
+        ("guard", VillageSize / 2 + 3.5, 10.5),
     };
+
+    /// <summary>A village folk's name, and the body model it stands in.</summary>
+    public static string FolkName(string who) => who switch
+    {
+        "smith" => "Oskar the Smith", "healer" => "Maren the Healer", "peddler" => "Tobin Hale the Peddler",
+        "priest" => "Brother Aldric", "guard" => "Watchman Brannoc", _ => "Elder Corwin",
+    };
+
+    public static string FolkBody(string who) => who switch { "peddler" => "body-merchant", "priest" => "body-priest", "guard" => "body-guard", _ => "body-" + who };
 
     // ---- the dungeon ------------------------------------------------------------------------------------------------
 
@@ -407,6 +419,17 @@ public sealed class Floor
                 int x = room.X + r.Int(0, room.W), y = room.Y + r.Int(0, room.H);
                 if (!ByWall(x, y) || !Walk(x, y) || Props.Any(p => Math.Abs(p.X - x) < 3 && Math.Abs(p.Y - y) < 3)) continue;
                 Add("brazier", "brazier", x, y, true, 1.1);
+                k++;
+            }
+            // Torches on the walls: one or two a room, turned to face out from the wall.
+            for (int k = 0, tries = 0; k < (area > 90 ? 2 : 1) && tries < 30; tries++)
+            {
+                int x = room.X + r.Int(0, room.W), y = room.Y + r.Int(0, room.H);
+                (int dx, int dy)? wall = !Floor_(x, y - 1) ? (0, -1) : !Floor_(x - 1, y) ? (-1, 0) : !Floor_(x + 1, y) ? (1, 0) : !Floor_(x, y + 1) ? (0, 1) : null;
+                if (wall == null || !Walk(x, y) || Props.Any(p => Math.Abs(p.X - x) < 3 && Math.Abs(p.Y - y) < 3 && p.Kind is "brazier" or "torch")) continue;
+                // Rot: the torch's back (-Z of the model) toward the wall.
+                double rot = Math.Atan2(-wall.Value.dx, -wall.Value.dy);
+                Add("torch-sconce", "torch", x, y, false, 0.6, rot);
                 k++;
             }
             if (room == start) continue;

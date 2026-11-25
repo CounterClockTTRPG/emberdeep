@@ -15,6 +15,8 @@ public partial class World3D : Node3D
     public Game Game;
     public Camera3D Cam;
     public float Zoom = 1;
+    /// <summary>The camera's turn around the hero (radians, 0: from the south-east), and where it is turning to.</summary>
+    public float Yaw, YawTarget;
     private WorldEnvironment _env;
     private DirectionalLight3D _sun;
     private OmniLight3D _heroLight;
@@ -269,6 +271,13 @@ public partial class World3D : Node3D
         _level.AddChild(node);
         _props[p.Id] = node;
         if (p.Kind == "brazier") Light(at + new Vector3(0, 1.4f, 0), new Color(1f, 0.55f, 0.2f), 2.2f, 7.5f, true);
+        if (p.Kind == "torch")
+        {
+            // On the wall: pushed back against it and raised to head height, its flame lit.
+            var back = new Vector3(-Mathf.Sin((float)p.Rot), 0, -Mathf.Cos((float)p.Rot));
+            node.Position = at + back * 0.42f + new Vector3(0, 1.5f, 0);
+            Light(node.Position + new Vector3(0, 0.35f, 0) - back * 0.2f, new Color(1f, 0.6f, 0.25f), 1.6f, 6f, true);
+        }
         if (p.Kind == "waystone") Light(at + new Vector3(0, 2.0f, 0), new Color(0.4f, 0.6f, 1f), Game.Hero.Waystones.Contains(Game.Depth) ? 1.6f : 0.5f, 6, false);
         if (p.Kind == "down") Light(at + new Vector3(0, -0.6f, 0), new Color(1f, 0.35f, 0.1f), 1.8f, 4, true);
         bool spent = p.OneUse && Game.Here.Opened.Contains(p.Id);
@@ -520,7 +529,8 @@ public partial class World3D : Node3D
         foreach (var (l, e, ph) in _flicker) l.LightEnergy = e * (0.85f + 0.15f * Mathf.Sin((float)_clock * 9 + ph) * Mathf.Sin((float)_clock * 5.3f + ph * 2));
         Vector3 hero = At(Game.Me.X, Game.Me.Y);
         _camAt = _camAt == Vector3.Zero || _camAt.DistanceTo(hero) > 12 ? hero : _camAt.Lerp(hero, Mathf.Min(1, (float)dt * 8));
-        Vector3 off = new Vector3(9.5f, 14.5f, 9.5f) * Zoom;
+        Yaw = Mathf.LerpAngle(Yaw, YawTarget, Mathf.Min(1, (float)dt * 10));
+        Vector3 off = (new Vector3(9.5f, 0, 9.5f).Rotated(Vector3.Up, Yaw) + new Vector3(0, 14.5f, 0)) * Zoom;
         Vector3 shake = _shake > 0 ? new Vector3(Mathf.Sin((float)_clock * 61), Mathf.Sin((float)_clock * 47), 0) * _shake * 0.25f : Vector3.Zero;
         _shake = Mathf.Max(0, _shake - (float)dt * 2);
         Cam.Position = _camAt + off + shake;
@@ -568,7 +578,7 @@ public partial class World3D : Node3D
     {
         string body; float h;
         if (a.Hero) { body = Data.HeroBody(Game.Hero); h = Game.Hero.Female ? 1.72f : 1.8f; }
-        else if (a.Npc) { body = "body-" + a.Def; h = a.Def == "smith" ? 1.85f : 1.7f; }
+        else if (a.Npc) { body = Floor.FolkBody(a.Def); h = a.Def is "smith" or "guard" ? 1.85f : 1.7f; }
         else
         {
             MonDef m = a.M;
@@ -604,12 +614,13 @@ public partial class World3D : Node3D
         {
             var name = new Label3D
             {
-                Text = a.Def switch { "smith" => "Oskar the Smith", "healer" => "Maren the Healer", _ => "Elder Corwin" },
+                Text = Floor.FolkName(a.Def),
                 Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, FontSize = 40, PixelSize = 0.006f,
                 Modulate = new Color(0.95f, 0.85f, 0.6f), OutlineSize = 10, Position = new Vector3(0, h + 0.35f, 0),
             };
             fig.AddChild(name);
             if (a.Def == "smith") fig.Hold("sword", null, null);
+            if (a.Def == "guard") fig.Hold("axe", null, "shield");
         }
         fig.Rotation = new Vector3(0, (float)a.Facing, 0);
         return fig;
@@ -1424,7 +1435,8 @@ varying vec3 wpos;
 void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
     // A wall is seen once the cell in front of its face is: sample half a metre toward the camera's side.
-    float s = fog > 0.5 ? max(texture(seen, wpos.xz / size).r, texture(seen, (wpos.xz + vec2(0.5)) / size).r) : 1.0;
+    vec2 toward = normalize(cam_pos.xz - hero_pos.xz + vec2(0.0001));
+    float s = fog > 0.5 ? max(texture(seen, wpos.xz / size).r, texture(seen, (wpos.xz + toward * 0.6) / size).r) : 1.0;
     ALBEDO = COLOR.rgb * mix(0.05, 1.0, s);
     ROUGHNESS = 0.95;
     if (cut > 0.5 && wpos.y > 0.3) {

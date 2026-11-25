@@ -121,6 +121,54 @@ public partial class SkillIcon : Control
     }
 }
 
+/// <summary>
+/// A button of the band: an icon in an iron-rimmed frame (its own UI icon once assetgen has made it, an item's until
+/// then), lit while its panel is open, with an ember mark when there are points to spend. Its name shows on hover.
+/// </summary>
+public partial class BandButton : Control
+{
+    private readonly string _icon, _fallback;
+    private readonly Action _press;
+    public bool Badge, Lit;
+    private bool _hover;
+
+    public BandButton() { }
+
+    public BandButton(string icon, string fallback, string tip, Action press)
+    {
+        _icon = icon; _fallback = fallback; _press = press;
+        TooltipText = tip;
+        CustomMinimumSize = new Vector2(50, 50);
+        MouseFilter = MouseFilterEnum.Stop;
+        MouseDefaultCursorShape = CursorShape.PointingHand;
+        MouseEntered += () => { _hover = true; QueueRedraw(); };
+        MouseExited += () => { _hover = false; QueueRedraw(); };
+    }
+
+    public override void _Process(double delta) => QueueRedraw();
+
+    public override void _Draw()
+    {
+        var r = new Rect2(Vector2.Zero, Size);
+        var sb = new StyleBoxFlat { BgColor = UITheme.Soot, BorderColor = Lit ? UITheme.Ember : _hover ? UITheme.EdgeLit : UITheme.Edge };
+        sb.SetBorderWidthAll(Lit ? 2 : 1);
+        sb.SetCornerRadiusAll(6);
+        DrawStyleBox(sb, r);
+        Texture2D t = Kit.Icon(_icon) ?? Kit.Icon(_fallback);
+        if (t != null) DrawTextureRect(t, r.Grow(-5), false, _hover || Lit ? Colors.White : new Color(0.85f, 0.82f, 0.78f));
+        if (Badge)
+        {
+            DrawCircle(new Vector2(Size.X - 7, 7), 6, UITheme.Ember);
+            DrawString(UITheme.Body, new Vector2(Size.X - 12, 12), "+", HorizontalAlignment.Center, 10, 13, UITheme.Soot);
+        }
+    }
+
+    public override void _GuiInput(InputEvent e)
+    {
+        if (e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }) { Sounds.Play("click"); _press?.Invoke(); AcceptEvent(); }
+    }
+}
+
 /// <summary>The panels share a frame: a heading, a close button, a body.</summary>
 public abstract partial class GamePanel : PanelContainer
 {
@@ -345,18 +393,18 @@ public partial class ShopPanel : GamePanel
 {
     public ShopPanel() { }
 
-    public ShopPanel(GameScreen s) : base(s, s.Trading == "healer" ? "Maren's Remedies" : "Oskar's Forge", "left")
+    public ShopPanel(GameScreen s) : base(s, s.Trading switch { "healer" => "Maren's Remedies", "peddler" => "Tobin's Wares", _ => "Oskar's Forge" }, "left")
     {
-        bool healer = s.Trading == "healer";
+        bool healer = s.Trading == "healer", peddler = s.Trading == "peddler";
         Body.AddChild(Line("Click a ware to buy it.", UITheme.Dim, 14));
         var grid = new GridContainer { Columns = 6 };
         grid.AddThemeConstantOverride("h_separation", 4);
         grid.AddThemeConstantOverride("v_separation", 4);
-        var wares = healer ? Loot.HealerStock() : G.SmithWares;
+        var wares = healer ? Loot.HealerStock() : peddler ? G.PeddlerWares : G.SmithWares;
         for (int k = 0; k < wares.Count; k++)
         {
             int i = k;
-            string from = healer ? "healer" : "smith";
+            string from = healer ? "healer" : peddler ? "peddler" : "smith";
             grid.AddChild(new ItemSlot
             {
                 Item = wares[k], Game = G, CustomMinimumSize = new Vector2(64, 64),
@@ -366,7 +414,7 @@ public partial class ShopPanel : GamePanel
         }
         Body.AddChild(grid);
         Body.AddChild(Line($"You have {G.Hero.Gold} gold", new Color(0.95f, 0.8f, 0.35f)));
-        if (!healer)
+        if (!healer && !peddler)
         {
             // Oskar joins three gems of a kind and grade into one of the next grade.
             Body.AddChild(new HSeparator());
@@ -408,12 +456,12 @@ public partial class TalkPanel : GamePanel
 {
     public TalkPanel() { }
 
-    public TalkPanel(GameScreen s) : base(s, s.TalkingTo switch { "smith" => "Oskar the Smith", "healer" => "Maren the Healer", _ => "Elder Corwin" }, "centre")
+    public TalkPanel(GameScreen s) : base(s, Floor.FolkName(s.TalkingTo), "centre")
     {
         CustomMinimumSize = new Vector2(600, 0);
         Body.AddChild(UITheme.Wrap(s.TalkText ?? "", 17, UITheme.Text, 560));
         var row = UITheme.H(10);
-        if (s.TalkingTo is "smith" or "healer")
+        if (s.TalkingTo is "smith" or "healer" or "peddler")
         {
             string who = s.TalkingTo;
             row.AddChild(UITheme.B("Trade", () =>
@@ -424,6 +472,25 @@ public partial class TalkPanel : GamePanel
                 s.Trading = who;
                 s.Open("right", "inventory");
             }));
+        }
+        if (s.TalkingTo == "priest")
+        {
+            // Brother Aldric's blessings: a shrine's, for five minutes, for gold.
+            var bless = new GridContainer { Columns = 3 };
+            bless.AddThemeConstantOverride("h_separation", 6);
+            bless.AddThemeConstantOverride("v_separation", 6);
+            foreach (var sh in Data.Shrines.Where(x => x.seconds > 0))
+            {
+                string id = sh.id;
+                bless.AddChild(UITheme.B(sh.name.Replace("Shrine of ", ""), () =>
+                {
+                    string why = G.Bless(id);
+                    if (why != null) s.Say(why, UITheme.Bad);
+                    s.Open("centre", "");
+                }, 15, $"{sh.about}, for five minutes: {G.BlessingCost} gold"));
+            }
+            Body.AddChild(Line($"A blessing for five minutes: {G.BlessingCost} gold.", UITheme.Dim, 14));
+            Body.AddChild(bless);
         }
         if (s.TalkingTo == "elder" && G.CanGoDeeper)
             row.AddChild(UITheme.B($"Go down again: {Data.Tiers[G.Tier + 1]}", () =>
@@ -506,8 +573,8 @@ public partial class MenuPanel : GamePanel
         }
         Body.AddChild(new HSeparator());
         Body.AddChild(Line(GameScreen.Touch
-            ? "Tap to walk, fight, pick up and use. Tap the right-hand skill icon to make taps use that skill. Back closes panels."
-            : "Left click: walk, fight, pick up, use, talk (hold to keep walking). Right click: your skill (hold to repeat). Shift: fight where you stand. Q W E R T: choose a skill. 1-4: the belt. I C S: pack, character, skills. Tab: the map.",
+            ? "Tap to walk, fight, pick up and use. Tap the right-hand skill icon to make taps use that skill. Two fingers: pinch to zoom, twist to turn the view. Back closes panels."
+            : "Left click: walk, fight, pick up, use, talk (hold to keep walking). Right click: your skill (hold to repeat). Shift: fight where you stand. Q W E R T: choose a skill. 1-4: the belt. I C S: pack, character, skills. Tab: the map. Wheel: zoom. Middle button drag, [ and ]: turn the view (Backspace: back).",
             UITheme.Dim, 14));
         Body.GetChild<Label>(Body.GetChildCount() - 1).AutowrapMode = TextServer.AutowrapMode.WordSmart;
         Body.AddChild(new HSeparator());

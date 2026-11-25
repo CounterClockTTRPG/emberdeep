@@ -33,6 +33,8 @@ public partial class Root : Node
         Profile.Agent = agent;
         Profile.Load();
         Profile.Current.Apply();
+        // On a phone everything is drawn a third larger, so a thumb can hit it.
+        if (OS.HasFeature("mobile") && DisplayServer.IsTouchscreenAvailable()) GetWindow().ContentScaleFactor = 1.35f;
         _ui = new CanvasLayer { Name = "UI", Layer = 10 };
         AddChild(_ui);
         if (check) { AddChild(new SelfCheck()); return; }
