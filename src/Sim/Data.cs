@@ -279,6 +279,32 @@ public static class Data
         ("mending", "Shrine of Mending", "life and mana made whole", 0),
     };
 
+    // ---- gems -------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A gem: its name, and what it gives by where it is socketed, at each grade (chipped, plain, flawless): in a
+    /// weapon, in armour (body armour, a helm), in a shield.
+    /// </summary>
+    public sealed record GemDef(string Id, string Name, (Stat stat, int[] v) Weapon, (Stat stat, int[] v) Armour, (Stat stat, int[] v) Shield);
+
+    public static readonly GemDef[] Gems =
+    {
+        new("ruby", "Ruby", (Stat.FireDmg, new[] { 4, 9, 16 }), (Stat.Life, new[] { 10, 20, 35 }), (Stat.FireRes, new[] { 12, 20, 30 })),
+        new("sapphire", "Sapphire", (Stat.ColdDmg, new[] { 4, 8, 14 }), (Stat.Mana, new[] { 10, 20, 35 }), (Stat.ColdRes, new[] { 12, 20, 30 })),
+        new("topaz", "Topaz", (Stat.LightDmg, new[] { 8, 16, 28 }), (Stat.MagicFind, new[] { 8, 14, 22 }), (Stat.LightRes, new[] { 12, 20, 30 })),
+        new("emerald", "Emerald", (Stat.Accuracy, new[] { 25, 50, 90 }), (Stat.Agility, new[] { 3, 6, 10 }), (Stat.Armour, new[] { 8, 16, 28 })),
+        new("amethyst", "Amethyst", (Stat.SpellDmg, new[] { 6, 12, 20 }), (Stat.Spirit, new[] { 3, 6, 10 }), (Stat.ManaRegen, new[] { 15, 30, 50 })),
+        new("diamond", "Diamond", (Stat.DmgPct, new[] { 10, 20, 35 }), (Stat.Might, new[] { 3, 6, 10 }), (Stat.AllRes, new[] { 5, 9, 14 })),
+        new("bloodstone", "Bloodstone", (Stat.LifeSteal, new[] { 2, 3, 5 }), (Stat.LifeRegen, new[] { 1, 2, 4 }), (Stat.Block, new[] { 3, 5, 8 })),
+    };
+
+    public static readonly string[] GemGrades = { "Chipped", "", "Flawless" };
+
+    public static GemDef Gem(string id) => Gems.FirstOrDefault(g => g.Id == id);
+
+    /// <summary>How many sockets a base can have at most (0: none).</summary>
+    public static int MaxSockets(Base b) => b.Weapon ? (b.TwoHanded ? 4 : 3) : b.Kind switch { Kind.Body => 3, Kind.Shield => 3, Kind.Head => 2, _ => 0 };
+
     // ---- the hero's growth ------------------------------------------------------------------------------------------
 
     /// <summary>Experience to go from a level to the next.</summary>
@@ -324,6 +350,13 @@ public static class Data
         new("scroll", "Waystone Scroll", Kind.Scroll, 1, Price: 50),
         new("gold", "Gold", Kind.Gold, 1, Price: 1),
         new("treasure-map", "Treasure Map", Kind.Map, 1, Price: 400),
+        new("gem-ruby", "Ruby", Kind.Gem, 1, Price: 60),
+        new("gem-sapphire", "Sapphire", Kind.Gem, 1, Price: 60),
+        new("gem-topaz", "Topaz", Kind.Gem, 1, Price: 60),
+        new("gem-emerald", "Emerald", Kind.Gem, 1, Price: 60),
+        new("gem-amethyst", "Amethyst", Kind.Gem, 1, Price: 60),
+        new("gem-diamond", "Diamond", Kind.Gem, 1, Price: 80),
+        new("gem-bloodstone", "Bloodstone", Kind.Gem, 1, Price: 80),
     };
 
     private static readonly Dictionary<string, Base> _base = Bases.ToDictionary(b => b.Id);

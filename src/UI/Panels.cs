@@ -10,6 +10,8 @@ public partial class ItemSlot : Control
     public Item Item;
     public string Key, Empty;
     public Action Clicked, RightClicked;
+    /// <summary>Picked up (a gem waiting for a socket): drawn with an ember frame.</summary>
+    public bool Picked;
     /// <summary>A last line for the tooltip (what it sells for, what it costs).</summary>
     public Func<Item, string> Extra;
     public Game Game;
@@ -32,8 +34,27 @@ public partial class ItemSlot : Control
         else if (Item == null && Empty != null) DrawString(UITheme.Body, new Vector2(0, Size.Y / 2 + 5), Empty, HorizontalAlignment.Center, Size.X, 12, UITheme.Faint);
         DrawRect(r, frame, false, 2);
         if (Item != null && Item.Count > 1) DrawString(UITheme.Body, new Vector2(4, Size.Y - 5), Item.Count.ToString(), HorizontalAlignment.Left, -1, 14, UITheme.Text);
+        if (Item != null && Item.Sockets > 0)
+        {
+            // A dot a socket along the bottom: the gem's colour, or hollow when empty.
+            float d = Math.Min(9, (Size.X - 8) / Item.Sockets);
+            for (int k = 0; k < Item.Sockets; k++)
+            {
+                var c = new Vector2(Size.X / 2 + (k - (Item.Sockets - 1) / 2f) * d, Size.Y - 7);
+                if (k < Item.Gems.Count) DrawCircle(c, 3.2f, GemColour(Item.GemOf(Item.Gems[k]).id));
+                else DrawArc(c, 3, 0, Mathf.Tau, 12, UITheme.Bone, 1.2f);
+            }
+        }
+        if (Picked) DrawRect(r.Grow(-1), UITheme.Ember, false, 3);
         if (Key != null) DrawString(UITheme.Body, new Vector2(Size.X - 12, 14), Key, HorizontalAlignment.Left, -1, 12, UITheme.Dim);
     }
+
+    public static Color GemColour(string id) => id switch
+    {
+        "ruby" => new Color(0.9f, 0.15f, 0.15f), "sapphire" => new Color(0.25f, 0.45f, 1f), "topaz" => new Color(1f, 0.8f, 0.2f),
+        "emerald" => new Color(0.2f, 0.8f, 0.35f), "amethyst" => new Color(0.7f, 0.3f, 0.9f), "diamond" => new Color(0.95f, 0.95f, 1f),
+        _ => new Color(0.5f, 0.05f, 0.08f),
+    };
 
     public override void _GuiInput(InputEvent e)
     {
@@ -151,7 +172,7 @@ public partial class InventoryPanel : GamePanel
         {
             "smith" or "healer" => "Click a thing in your pack to sell it.",
             "stash" => "Click a thing in your pack to put it in the stash.",
-            _ => "Click to wear or drink; right-click to drop. Click what you wear to take it off.",
+            _ => "Click to wear or drink; right-click to drop. Click what you wear to take it off. A gem: click it, then an item with an empty socket.",
         }, UITheme.Dim, 14));
         var doll = new GridContainer { Columns = 5 };
         doll.AddThemeConstantOverride("h_separation", 6);
@@ -162,7 +183,13 @@ public partial class InventoryPanel : GamePanel
             doll.AddChild(new ItemSlot
             {
                 Item = h.Equip[(int)sl], Empty = sl.ToString().Replace("1", "").Replace("2", ""), Game = G, CustomMinimumSize = new Vector2(72, 72),
-                Clicked = () => { if (h.Equip[(int)here] != null) Done(h.Unequip(here)); },
+                Clicked = () =>
+                {
+                    if (h.Equip[(int)here] == null) return;
+                    // A gem picked up goes into what is worn; otherwise a click takes it off.
+                    if (s.GemPick >= 0) { int gp = s.GemPick; s.GemPick = -1; Done(G.Socket(gp, -1, here)); }
+                    else Done(h.Unequip(here));
+                },
             });
         }
         Body.AddChild(doll);
@@ -174,11 +201,26 @@ public partial class InventoryPanel : GamePanel
             int place = k;
             pack.AddChild(new ItemSlot
             {
-                Item = h.Pack[k], Game = G, CustomMinimumSize = new Vector2(53, 53),
+                Item = h.Pack[k], Game = G, CustomMinimumSize = new Vector2(53, 53), Picked = s.GemPick == k,
                 Extra = it => trade is "smith" or "healer" ? $"Sells for {it.Worth} gold" : it.B.Wearable ? Compare(it) : null,
                 Clicked = () =>
                 {
                     if (h.Pack[place] == null) return;
+                    // Gems: click one to pick it up, then the item to set it in (the same gem again: put it down).
+                    if (trade == null && s.GemPick >= 0)
+                    {
+                        int gp = s.GemPick;
+                        s.GemPick = -1;
+                        if (gp != place) Done(G.Socket(gp, place)); else S.Refresh();
+                        return;
+                    }
+                    if (trade == null && h.Pack[place].B?.Kind == Kind.Gem)
+                    {
+                        s.GemPick = place;
+                        S.Say($"Now click an item with an empty socket for the {h.Pack[place].Name}.", UITheme.Dim);
+                        S.Refresh();
+                        return;
+                    }
                     if (trade is "smith" or "healer") Done(G.Sell(place));
                     else if (trade == "stash") Done(G.ToStash(place));
                     else Done(G.UsePack(place));
@@ -324,6 +366,18 @@ public partial class ShopPanel : GamePanel
         }
         Body.AddChild(grid);
         Body.AddChild(Line($"You have {G.Hero.Gold} gold", new Color(0.95f, 0.8f, 0.35f)));
+        if (!healer)
+        {
+            // Oskar joins three gems of a kind and grade into one of the next grade.
+            Body.AddChild(new HSeparator());
+            Body.AddChild(UITheme.Wrap($"Three gems of a kind and grade, joined into one better: {Game.CombineCost(0)} gold for chipped, {Game.CombineCost(1)} for plain.", 14, UITheme.Dim, 400));
+            Body.AddChild(UITheme.B("Join gems", () =>
+            {
+                int made = G.CombineGems();
+                S.Say(made > 0 ? $"Oskar joins {made} gem{(made > 1 ? "s" : "")}." : "Oskar shrugs: three of a kind and grade, and the gold for it.", made > 0 ? UITheme.Accent : UITheme.Dim);
+                Done(null);
+            }, 16));
+        }
     }
 }
 

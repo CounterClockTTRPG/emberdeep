@@ -26,13 +26,55 @@ public sealed class Item
     /// <summary>A treasure map: which lair it opens (Data.Lairs), and the seed its lair is made from.</summary>
     public int Lair = -1;
     public ulong MapSeed;
+    /// <summary>A gem's grade: 0 chipped, 1 plain, 2 flawless.</summary>
+    public int Grade;
+    /// <summary>Sockets an item has, and the gems set in them (base id and grade, e.g. "gem-ruby:2").</summary>
+    public int Sockets;
+    public List<string> Gems = new();
 
     public Item() { }
     public Item(string baseId, int count = 1) { Base = baseId; Count = count; Name = Data.BaseOf(baseId)?.Name ?? baseId; }
 
     public Base B => Data.BaseOf(Base);
 
-    public int Get(Stat s) { int v = 0; foreach (Mod m in Mods) if (m.Stat == s) v += m.Value; return v; }
+    /// <summary>A stat from the item's own affixes and the gems set in it.</summary>
+    public int Get(Stat s)
+    {
+        int v = 0;
+        foreach (Mod m in Mods) if (m.Stat == s) v += m.Value;
+        foreach (var (stat, value) in GemMods()) if (stat == s) v += value;
+        return v;
+    }
+
+    /// <summary>What the gems set in this item give, by where it is (a weapon, armour, a shield).</summary>
+    public IEnumerable<(Stat stat, int value)> GemMods()
+    {
+        Base b = B;
+        if (b == null || Gems.Count == 0) yield break;
+        foreach (string g in Gems)
+        {
+            var (id, grade) = GemOf(g);
+            Data.GemDef d = Data.Gem(id);
+            if (d == null) continue;
+            var (stat, v) = b.Weapon ? d.Weapon : b.Kind == Kind.Shield ? d.Shield : d.Armour;
+            yield return (stat, v[Math.Clamp(grade, 0, 2)]);
+        }
+    }
+
+    /// <summary>"gem-ruby:2" as (ruby, 2).</summary>
+    public static (string id, int grade) GemOf(string socketed)
+    {
+        string[] p = socketed.Split(':');
+        return (p[0].Replace("gem-", ""), p.Length > 1 && int.TryParse(p[1], out int g) ? g : 0);
+    }
+
+    /// <summary>A gem of a kind and grade, its name with the grade ("Flawless Ruby").</summary>
+    public static Item Gem(string id, int grade)
+    {
+        Data.GemDef d = Data.Gem(id);
+        string pre = Data.GemGrades[Math.Clamp(grade, 0, 2)];
+        return new Item("gem-" + id) { Grade = Math.Clamp(grade, 0, 2), Name = (pre.Length > 0 ? pre + " " : "") + d.Name, Rarity = Rarity.Magic };
+    }
 
     /// <summary>The level the hero needs to wear it (a unique: its own).</summary>
     public int Requires => B == null ? 1 : Rarity == Rarity.Unique ? Math.Max(B.Level, Level)
@@ -58,6 +100,9 @@ public sealed class Item
 
     public string Title => B?.Stacks == true && Count > 1 ? $"{Name} ({Count})" : Name;
 
+    /// <summary>An item with an empty socket.</summary>
+    public bool OpenSocket => Sockets > Gems.Count;
+
     /// <summary>The tooltip's lines after the name: the base's numbers, then the affixes.</summary>
     public IEnumerable<string> Lines()
     {
@@ -80,7 +125,17 @@ public sealed class Item
             yield return $"Opens a portal to {Data.Lairs[Lair].Name}: monster level {Level}";
             yield return "One way in, one way out: it closes behind you";
         }
+        if (b.Kind == Kind.Gem && Data.Gem(Base.Replace("gem-", "")) is Data.GemDef gd)
+        {
+            int g = Math.Clamp(Grade, 0, 2);
+            yield return $"In a weapon: {Data.Describe(gd.Weapon.stat, gd.Weapon.v[g])}";
+            yield return $"In armour: {Data.Describe(gd.Armour.stat, gd.Armour.v[g])}";
+            yield return $"In a shield: {Data.Describe(gd.Shield.stat, gd.Shield.v[g])}";
+            yield return "Click it, then an item with an empty socket";
+        }
         foreach (Mod m in Mods) yield return Data.Describe(m.Stat, m.Value);
+        foreach (var (stat, value) in GemMods()) yield return Data.Describe(stat, value) + " (gem)";
+        if (Sockets > 0) yield return $"Sockets {Gems.Count} of {Sockets}" + (Gems.Count < Sockets ? $": {Sockets - Gems.Count} empty" : "");
         if (b.Wearable && Requires > 1) yield return $"Requires level {Requires}";
     }
 }
@@ -116,6 +171,17 @@ public static class Loot
             int v = r.Int(a.Lo, Math.Max(a.Lo, hi) + 1);
             it.Mods.Add(new Mod(a.Stat, v));
             if (a.Prefix) prefix ??= a; else suffix ??= a;
+        }
+        // Sockets: plain things often have them, magic ones fewer, rare ones at most one.
+        int most = Data.MaxSockets(b);
+        if (most > 0)
+        {
+            double chance = rarity switch { Rarity.Plain => 0.35, Rarity.Magic => 0.2, _ => 0.1 };
+            if (r.Chance(chance))
+            {
+                int cap = rarity switch { Rarity.Plain => most, Rarity.Magic => Math.Min(2, most), _ => 1 };
+                it.Sockets = r.Int(1, cap + 1);
+            }
         }
         it.Name = rarity switch
         {
@@ -183,6 +249,12 @@ public static class Loot
             if (x < 0.35) got.Add(new Item("gold", Math.Max(1, (int)((r.Int(3, 12) + level * r.Int(2, 6)) * (1 + goldFind / 100.0)))));
             else if (x < 0.55) got.Add(new Item(r.Chance(0.6) ? "pot-hp" : "pot-mp"));
             else if (x < 0.6) got.Add(new Item("scroll"));
+            else if (x < 0.66)
+            {
+                // A gem, better the deeper: chipped above, flawless below, plain between.
+                int grade = level < 7 ? (r.Chance(0.85) ? 0 : 1) : level < 16 ? (r.Chance(0.25) ? 0 : r.Chance(0.8) ? 1 : 2) : (r.Chance(0.5) ? 1 : 2);
+                got.Add(Item.Gem(Data.Gems[r.Int(0, Data.Gems.Length)].Id, grade));
+            }
             else
             {
                 Rarity rarity = RollRarity(quality, magicFind, r);

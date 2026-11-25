@@ -100,9 +100,20 @@ public partial class ShotRunner : Node
             g.OrderAttack(foe.Id, "bash");
             await Run(1.6);
             await Shot("fight");
+            // Gems: two in the pack, one picked up, a sword with three sockets (two set), armour with one.
+            g.Hero.Equip[(int)Slot.Weapon].Sockets = 3;
+            g.Hero.Equip[(int)Slot.Weapon].Gems.AddRange(new[] { "gem-ruby:2", "gem-topaz:1" });
+            g.Hero.Equip[(int)Slot.Body].Sockets = 1;
+            g.Hero.Pack[0] = Item.Gem("sapphire", 1);
+            g.Hero.Pack[1] = Item.Gem("bloodstone", 2);
+            g.Hero.Pack[2] = Loot.Make("heater-shield", Rarity.Plain, 8, new Rng(3));
+            g.Hero.Pack[2].Sockets = 2;
+            g.Hero.Changed();
+            Screen.GemPick = 1;
             Screen.Open("right", "inventory");
             Screen.Open("left", "character");
             await Shot("character");
+            Screen.GemPick = -1;
             Screen.Open("left", "skills");
             Screen.Open("right", "");
             await Shot("skills");

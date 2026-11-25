@@ -158,6 +158,22 @@ public static class AgentHooks
             await agent.Frames(1);
             return why ?? "done";
         });
+        agent.Command("socket", "socket GEM TARGET | socket GEM worn SLOT   set a gem (pack place) in an item (pack place, or worn)", async a =>
+        {
+            Game g = G();
+            int gem = AgentServer.Int(a[1]);
+            string why = a.Length > 3 && a[2] == "worn" && Enum.TryParse(a[3], true, out Slot sl) ? g.Socket(gem, -1, sl) : g.Socket(gem, AgentServer.Int(a[2]));
+            S().Refresh();
+            await agent.Frames(1);
+            return why ?? "set";
+        });
+        agent.Command("combine", "combine                (at the smith) join three gems of a kind and grade into one better", async _ =>
+        {
+            int made = G().CombineGems();
+            S().Refresh();
+            await agent.Frames(1);
+            return $"{made} joined";
+        });
         agent.Command("raise", "raise ATTR [N]         spend attribute points (might, agility, vigour, spirit)", async a =>
         {
             int n = a.Length > 2 ? AgentServer.Int(a[2]) : 1;

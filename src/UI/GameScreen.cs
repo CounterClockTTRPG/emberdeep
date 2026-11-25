@@ -37,6 +37,9 @@ public partial class GameScreen : Control
     private Button _charB, _skillB, _invB;
     private int _beltSig = -1;
     private string _skillSig;
+    /// <summary>The pack place of a gem picked up to be set in a socket (-1: none).</summary>
+    public int GemPick = -1;
+
     /// <summary>Who the open trade is with (smith, healer) or the stash.</summary>
     public string Trading;
 
@@ -214,6 +217,7 @@ public partial class GameScreen : Control
 
     public void CloseAll()
     {
+        GemPick = -1;
         Open("left", "");
         Open("right", "");
         Open("centre", "");
@@ -308,6 +312,7 @@ public partial class GameScreen : Control
             case "won": Sounds.Play("win", 0.9f); Banner("Victory"); Say(e.Text, UITheme.Accent); Open("centre", "notice"); break;
             case "portal": Sounds.Play("waystone", 0.6f); break;
             case "shieldbreak": Say("Your arcane shield breaks.", UITheme.Dim); break;
+            case "socket": Sounds.Play("magicdrop", 0.7f); Say(e.Text, new Color(0.6f, 0.75f, 1f)); break;
             case "restock": Say("The deep has filled again since you were here.", UITheme.Dim); break;
             case "lairportal": Sounds.Play("boss", 0.6f); Say($"The map burns away: a portal to {e.Text} opens.", new Color(1f, 0.5f, 0.3f)); break;
             case "lair": Banner(e.Text); Say("No way back but the way out, and it closes behind you.", UITheme.Dim); break;

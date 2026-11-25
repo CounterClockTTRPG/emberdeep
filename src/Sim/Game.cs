@@ -1527,6 +1527,52 @@ public sealed partial class Game
         return null;
     }
 
+    // ---- gems --------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Set a gem from the pack into an item with an empty socket (a pack place, or something worn: equipped). It
+    /// stays there for good. Null when done, else why not.
+    /// </summary>
+    public string Socket(int gemPlace, int packPlace = -1, Slot? worn = null)
+    {
+        Item gem = gemPlace >= 0 && gemPlace < Hero.Pack.Length ? Hero.Pack[gemPlace] : null;
+        if (gem?.B?.Kind != Kind.Gem) return "that is not a gem";
+        Item target = worn is Slot s ? Hero.Equip[(int)s] : packPlace >= 0 && packPlace < Hero.Pack.Length ? Hero.Pack[packPlace] : null;
+        if (target == null || target == gem) return "nothing to set it in";
+        if (target.Sockets == 0) return "it has no sockets";
+        if (!target.OpenSocket) return "its sockets are full";
+        target.Gems.Add($"{gem.Base}:{gem.Grade}");
+        Hero.Pack[gemPlace] = null;
+        Hero.Changed();
+        Emit(new Ev { Kind = "socket", Text = $"{gem.Name} set in {target.Name}" });
+        return null;
+    }
+
+    /// <summary>What the smith asks to join three gems: more for the better grade.</summary>
+    public static int CombineCost(int grade) => grade == 0 ? 100 : 400;
+
+    /// <summary>
+    /// The smith joins three gems of a kind and grade into one of the next grade, as many times as the pack and the
+    /// purse allow. Returns how many were made.
+    /// </summary>
+    public int CombineGems()
+    {
+        int made = 0;
+        for (int grade = 0; grade < 2; grade++)
+            foreach (Data.GemDef d in Data.Gems)
+                while (true)
+                {
+                    var places = Enumerable.Range(0, Hero.Pack.Length).Where(i => Hero.Pack[i]?.Base == "gem-" + d.Id && Hero.Pack[i].Grade == grade).Take(3).ToList();
+                    if (places.Count < 3 || Hero.Gold < CombineCost(grade)) break;
+                    Hero.Gold -= CombineCost(grade);
+                    foreach (int p in places) Hero.Pack[p] = null;
+                    Hero.Pack[places[0]] = Item.Gem(d.Id, grade + 1);
+                    made++;
+                }
+        if (made > 0) Emit(new Ev { Kind = "gold", V = 0, Text = $"Oskar joins {made} gem{(made > 1 ? "s" : "")}" });
+        return made;
+    }
+
     /// <summary>Drop a pack item on the floor at the hero's feet.</summary>
     public string Discard(int place)
     {

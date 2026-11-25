@@ -424,6 +424,41 @@ public partial class SelfCheck
     }
 
     [Section]
+    private void Gems()
+    {
+        Check(Data.Gems.All(d => Data.BaseOf("gem-" + d.Id)?.Kind == Kind.Gem && Godot.FileAccess.FileExists($"res://assets/icons/gem-{d.Id}.png")), "seven gems, each with its icon");
+        var r = new Rng(4);
+        int socketed = 0, gems = 0;
+        for (int k = 0; k < 2000; k++) if (Loot.Make("long-sword", Rarity.Plain, 10, r).Sockets > 0) socketed++;
+        for (int k = 0; k < 3000; k++) gems += Loot.Drop(12, 1, 0, 0, r).Count(i => i.B.Kind == Kind.Gem);
+        Check(socketed > 400 && socketed < 1000, $"a plain sword has sockets about a third of the time ({socketed} in 2000)");
+        Check(gems > 50, $"monsters drop gems ({gems} in 3000)");
+        Check(Loot.Make("ring", Rarity.Magic, 10, r).Sockets == 0, "rings never have sockets");
+        // A ruby in a sword adds fire; in armour, life; in a shield, fire resistance.
+        Game g = Game.New(2, Cls.Wanderer);
+        Hero h = g.Hero;
+        h.Equip[(int)Slot.Weapon].Sockets = 2;
+        h.Equip[(int)Slot.Body].Sockets = 1;
+        h.Equip[(int)Slot.Shield].Sockets = 1;
+        h.Changed();
+        double fire = h.S.FireMax, life = h.S.MaxLife;
+        int res = h.S.FireRes;
+        h.Pack[0] = Item.Gem("ruby", 2); h.Pack[1] = Item.Gem("ruby", 1); h.Pack[2] = Item.Gem("ruby", 0);
+        Check(g.Socket(0, -1, Slot.Weapon) == null && g.Socket(1, -1, Slot.Body) == null && g.Socket(2, -1, Slot.Shield) == null, "gems go into sockets");
+        Check(h.S.FireMax == fire + 16 && Math.Abs(h.S.MaxLife - (life + 20 * 1.2)) < 1e-6 && h.S.FireRes == res + 12, "and give by where they are");
+        Check(h.Pack[0] == null && h.Equip[(int)Slot.Body].Gems.Count == 1, "the gem leaves the pack");
+        h.Pack[3] = Item.Gem("topaz", 0);
+        Check(g.Socket(3, -1, Slot.Body) == "its sockets are full", "a full item takes no more");
+        Check(g.Socket(3, -1, Slot.Hands) != null, "nor does one without sockets");
+        // Oskar joins three of a kind and grade.
+        for (int k = 4; k < 10; k++) h.Pack[k] = Item.Gem("emerald", 0);
+        h.Gold = 1000;
+        Check(g.CombineGems() == 2 && h.Pack.Count(i => i?.Base == "gem-emerald" && i.Grade == 1) == 2 && h.Gold == 800, "six chipped emeralds, joined: two emeralds for 200 gold");
+        Game back = Saves.Read<Game>(Saves.Write(g));
+        Check(back.Hero.Equip[(int)Slot.Weapon].Gems.Count == 1 && back.Hero.S.FireMax == h.S.FireMax, "socketed gems survive a save");
+    }
+
+    [Section]
     private void Comforts()
     {
         Game g = Bare(Cls.Rogue, 1);
