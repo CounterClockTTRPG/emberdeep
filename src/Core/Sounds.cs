@@ -53,6 +53,17 @@ public static class Sounds
         ("nomana", Effects.Roll("deny", 1)),
         ("boss", Effects.Describe("huge roar echo", 7)),
         ("step", Effects.Describe("soft step on stone")),
+        ("step2", Effects.Describe("soft step on stone", 2)),
+        ("growl", Effects.Describe("small roar", 3)),
+        ("groan", Effects.Describe("deep soft roar long", 4)),
+        ("shriek", Effects.Describe("high roar echo", 5)),
+        ("hiss", Effects.Describe("small quick whoosh", 7)),
+        ("drip", Effects.Describe("small water drip echo", 1)),
+        ("drip2", Effects.Describe("small water drip echo", 2)),
+        ("crackle", Effects.Describe("small fire crackle", 1)),
+        ("rumble", Effects.Describe("huge distant stone impact", 4)),
+        ("wind", Effects.Describe("soft long distant whoosh", 3)),
+        ("bark", Effects.Describe("small distant roar", 9)),
         ("win", Effects.Roll("fanfare", 5)),
     };
 
@@ -79,6 +90,44 @@ public static class Sounds
         _music.Stream = s;
         _music.Play();
         ApplyMusic();
+    }
+
+    /// <summary>A pack's voice when it wakes, by kind.</summary>
+    public static string Voice(string mon) => mon switch
+    {
+        "gnawer" or "wolf" or "hound" or "boar" => "growl",
+        "sentry" or "archer" or "knight" => "bones",
+        "shade" or "hag" or "lich" => "shriek",
+        "imp" or "cultist" => "hiss",
+        _ => "groan",
+    };
+
+    /// <summary>The sounds of a place now and then: (sound, shortest and longest gap in seconds, volume).</summary>
+    public static (string sound, float min, float max, float volume)[] Ambience(string theme) => theme switch
+    {
+        "village" => new[] { ("wind", 5f, 12f, 0.35f), ("bark", 20f, 50f, 0.25f) },
+        "barrow" or "catacomb" => new[] { ("drip", 2f, 6f, 0.3f), ("drip2", 3f, 9f, 0.25f), ("groan", 25f, 60f, 0.15f) },
+        "ember" => new[] { ("crackle", 1.5f, 4f, 0.3f), ("rumble", 15f, 35f, 0.3f) },
+        _ => new[] { ("crackle", 1.5f, 4f, 0.35f), ("rumble", 8f, 20f, 0.4f), ("drip", 4f, 9f, 0.2f) },
+    };
+
+    /// <summary>
+    /// Write every sound and every music mood to WAV files in a folder (./play.sh --sounds), to listen to outside the
+    /// game. Needs no audio device.
+    /// </summary>
+    public static void WriteAll(string dir)
+    {
+        System.IO.Directory.CreateDirectory(dir);
+        foreach (var (name, def) in All)
+        {
+            SoundBank.Stream(Effects.Render(def)).SaveToWav(System.IO.Path.Combine(dir, $"sfx-{name}.wav"));
+            GD.Print($"  {dir}/sfx-{name}.wav");
+        }
+        foreach (string mood in new[] { "sad", "deep", "tense", "battle" })
+        {
+            SoundBank.MusicStream(new MusicSpec { Mood = mood, Bars = 16, Seed = "emberdeep-" + mood }).SaveToWav(System.IO.Path.Combine(dir, $"music-{mood}.wav"));
+            GD.Print($"  {dir}/music-{mood}.wav");
+        }
     }
 
     /// <summary>The music for a floor.</summary>

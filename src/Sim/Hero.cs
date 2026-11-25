@@ -50,6 +50,8 @@ public sealed class Hero
     public double BlessingLeft;
     /// <summary>How many times the elder has unlearned the hero's points (the first is free).</summary>
     public int Respecs;
+    /// <summary>The tier the hero walks (Data.Tiers): its resistances are lower the higher it is.</summary>
+    public int Tier;
 
     /// <summary>What unlearning costs now: nothing the first time, then 100 gold a level.</summary>
     public int RespecCost => Respecs == 0 ? 0 : 100 * Level;
@@ -158,9 +160,10 @@ public sealed class Hero
         st.ColdMin = cold > 0 ? Math.Max(1, cold / 2) : 0; st.ColdMax = cold;
         st.LightMin = light > 0 ? 1 : 0; st.LightMax = light;
         int all = Sum(Stat.AllRes) + 2 * R("ironskin");
-        st.FireRes = Math.Min(75, Sum(Stat.FireRes) + all);
-        st.ColdRes = Math.Min(75, Sum(Stat.ColdRes) + all);
-        st.LightRes = Math.Min(75, Sum(Stat.LightRes) + all);
+        int pen = Tier * Data.TierResist;
+        st.FireRes = Math.Min(75, Sum(Stat.FireRes) + all - pen);
+        st.ColdRes = Math.Min(75, Sum(Stat.ColdRes) + all - pen);
+        st.LightRes = Math.Min(75, Sum(Stat.LightRes) + all - pen);
         st.MagicFind = Sum(Stat.MagicFind);
         st.GoldFind = Sum(Stat.GoldFind);
         switch (BlessingLeft > 0 ? Blessing : null)

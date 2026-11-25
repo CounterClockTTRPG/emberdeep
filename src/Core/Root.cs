@@ -36,6 +36,13 @@ public partial class Root : Node
         _ui = new CanvasLayer { Name = "UI", Layer = 10 };
         AddChild(_ui);
         if (check) { AddChild(new SelfCheck()); return; }
+        if (Array.IndexOf(args, "--sounds") >= 0)
+        {
+            GD.Print("sounds:");
+            Sounds.WriteAll(ProjectSettings.GlobalizePath("res://shots/audio"));
+            GetTree().Quit();
+            return;
+        }
         Sounds.Start(this);
         if (shots) { AddChild(new ShotRunner()); return; }
         if (agent)

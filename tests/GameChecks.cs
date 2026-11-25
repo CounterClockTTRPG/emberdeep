@@ -349,8 +349,8 @@ public partial class SelfCheck
         plain.MaxLife = plain.Life = 1000;
         g.Here.Actors.Add(stone); g.Here.Actors.Add(plain);
         var hurt = typeof(Game).GetMethod("HurtFoe", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        hurt.Invoke(g, new object[] { stone, 100.0, Elem.Phys, false, 0.0 });
-        hurt.Invoke(g, new object[] { plain, 100.0, Elem.Phys, false, 0.0 });
+        hurt.Invoke(g, new object[] { stone, 100.0, Elem.Phys, false, 0.0, false });
+        hurt.Invoke(g, new object[] { plain, 100.0, Elem.Phys, false, 0.0, false });
         Check(stone.Life > plain.Life + 30, "a stone-skinned one shrugs off a blow");
     }
 
@@ -459,6 +459,63 @@ public partial class SelfCheck
     }
 
     [Section]
+    private void Ailments()
+    {
+        Game g = Bare(Cls.Sorcerer, 1);
+        g.Hero.Level = 8; g.Hero.Skills["firebolt"] = 5; g.Hero.Changed();
+        Actor t = Beside(g, "hollow", 5, 0);
+        t.MaxLife = t.Life = 5000; t.Resist = 0;
+        g.OrderAttack(t.Id, "firebolt");
+        Run(g, 0.9);
+        g.Halt();
+        Check(t.Burn > 0 && t.BurnDps > 0, "fire sets a foe burning");
+        double life = t.Life;
+        Run(g, 2);
+        Check(t.Life < life, "and it burns on after the blow");
+        var hurt = typeof(Game).GetMethod("HurtFoe", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        hurt.Invoke(g, new object[] { t, 20.0, Elem.Cold, true, 1.0, false });
+        Check(t.Frozen > 0 && t.Ailments().Contains("frozen"), "a cold critical freezes it");
+        double x = t.X;
+        t.Awake = true;
+        Run(g, 0.5);
+        Check(t.Act != "attack" && t.Act != "walk", "frozen, it does nothing");
+        // A hag's blow poisons the hero.
+        g = Bare(Cls.Wanderer, 4);
+        Actor hag = Beside(g, "hag");
+        hag.Accuracy = 1e6;
+        var hit = typeof(Game).GetMethod("HurtHero", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        hit.Invoke(g, new object[] { hag, 20.0, Elem.Phys, 1e6, true });
+        Check(g.Me.Poison > 0 && g.Me.Ailments().Contains("poisoned"), "a hag's blow poisons");
+        g.Here.Actors.Clear();
+        double me = g.Me.Life;
+        Run(g, 1.2);
+        Check(g.Me.Life < me, "and the poison bites");
+    }
+
+    [Section]
+    private void Tiers()
+    {
+        Game g = Game.New(6, Cls.Rogue);
+        g.Hero.Level = 30;
+        g.Hero.Equip[(int)Slot.Head] = new Item("leather-cap") { Mods = { new Mod(Stat.FireRes, 40) } };
+        g.Hero.Changed();
+        int res = g.Hero.S.FireRes;
+        g.Enter(1, null);
+        int before = g.Foes.First().Level;
+        g.Hero.Quests["hag"] = 3;
+        Check(g.GoDeeper() != null, "no going deeper before Vorgath falls");
+        g.Won = true;
+        Check(g.CanGoDeeper && g.GoDeeper() == null && g.Tier == 1 && g.Depth == 0, "after him: down again, from the village");
+        Check(g.Hero.S.FireRes == res - Data.TierResist && g.Hero.Quests.Count == 0 && g.Hero.Waystones.SetEquals(new[] { 0 }) && !g.Won, "resistances lower, quests and waystones begun again");
+        g.Enter(1, null);
+        Check(g.Foes.First(a => !a.Champion).Level >= before + Data.TierLevels - 2, $"monsters {Data.TierLevels} levels stronger ({g.Foes.First().Level})");
+        Check(g.PlaceName.EndsWith("(Smouldering)"), "and the place says so");
+        Game back = Saves.Read<Game>(Saves.Write(g));
+        Check(back.Tier == 1 && back.Hero.Tier == 1 && back.Hero.S.FireRes == g.Hero.S.FireRes, "the tier survives a save");
+        Check(Data.XpToNext(59) > Data.XpToNext(30), "levels go on to 60");
+    }
+
+    [Section]
     private void Comforts()
     {
         Game g = Bare(Cls.Rogue, 1);
@@ -524,10 +581,25 @@ public partial class SelfCheck
         Check(Profile.LoadGame(2) == null, "and cleared");
     }
 
+    /// <summary>Every music mood renders to sound (slow: only when asked, --only Music).</summary>
+    [Section(OnlyWhenAsked = true)]
+    private void Music()
+    {
+        foreach (string mood in new[] { "sad", "deep", "tense", "battle" })
+        {
+            var wav = SfxGen.SoundBank.MusicStream(new SfxGen.MusicSpec { Mood = mood, Bars = 4, Seed = "check-" + mood });
+            byte[] data = wav.Data;
+            Check(data.Length > 44100 && data.Any(b => b != 0 && b != 255), $"the {mood} music plays ({data.Length} bytes)");
+        }
+    }
+
     [Section]
     private void SoundsAndLook()
     {
         foreach (var (name, def) in Sounds.All) Check(Effects.Render(def).Any(s => Math.Abs(s) > 0.05f), $"the '{name}' sound is made");
+        foreach (string theme in new[] { "village", "barrow", "catacomb", "ember", "throne" })
+            Check(Sounds.Ambience(theme).All(a => Sounds.All.Any(x => x.name == a.sound)), $"the {theme}'s ambience has its sounds");
+        foreach (MonDef m in Data.Monsters) Check(Sounds.All.Any(x => x.name == Sounds.Voice(m.Id)), $"the {m.Id} has a voice");
         Check(UITheme.Theme != null && UITheme.Body != null, "the theme and its fonts load (Godot's own when assets/fonts is empty)");
     }
 }

@@ -635,6 +635,7 @@ public partial class World3D : Node3D
         float far = Game.Depth == 0 ? 40 : 26;
         fig.Visible = a.Hero || Game.Dist(a, Game.Me) < far && Seen(a.X, a.Y);
         if (!fig.Visible) return;
+        Ailing(a, fig);
         if (a.Hero)
         {
             Dress(fig, Game.Hero);
@@ -687,8 +688,45 @@ public partial class World3D : Node3D
         return list;
     }
 
+    /// <summary>What ails a figure shows on it: flames for burning, green motes for poison, ice shards for frozen.</summary>
+    private static void Ailing(Actor a, Figure3D fig)
+    {
+        float h = a.Hero ? 1.8f : (float)(a.M?.Height ?? 1.7) * (float)a.Scale;
+        Show("Burn", a.Burn > 0, () =>
+        {
+            CpuParticles3D f = Vfx.Flames(0.35f * Math.Max(1, h / 1.8f), 24);
+            f.Lifetime = 0.6;
+            return f;
+        });
+        Show("Poison", a.Poison > 0, () => Vfx.Trail(new Color(0.5f, 1f, 0.3f) * 1.4f, new Color(0.2f, 0.5f, 0.1f), 0.14f, 16, 0.8f));
+        Show("Ice", a.Frozen > 0, () =>
+        {
+            CpuParticles3D ice = Vfx.Trail(new Color(0.85f, 0.95f, 1f) * 1.6f, new Color(0.4f, 0.6f, 1f), 0.2f, 20, 0.5f);
+            ice.Mesh = new QuadMesh { Size = new Vector2(0.2f, 0.2f), Material = Vfx.Sprite(Vfx.Shard) };
+            ice.EmissionSphereRadius = 0.45f;
+            ice.Gravity = Vector3.Zero;
+            return ice;
+        });
+
+        void Show(string name, bool on, Func<CpuParticles3D> make)
+        {
+            var p = fig.GetNodeOrNull<CpuParticles3D>(name);
+            if (p == null && on)
+            {
+                p = make();
+                p.Name = name;
+                p.Position = new Vector3(0, h * (name == "Burn" ? 0.15f : 0.5f), 0);
+                fig.AddChild(p);
+            }
+            if (p != null) p.Emitting = on;
+        }
+    }
+
     private void Animate(Actor a, Figure3D fig)
     {
+        // Frozen solid: the clip stops where it was.
+        if (a.Frozen > 0) { fig.Freeze(true); return; }
+        fig.Freeze(false);
         bool fresh = !_last.TryGetValue(a.Id, out var last) || a.ActT < last.t - 1e-4 || a.Act != last.clip;
         _last[a.Id] = ((float)a.ActT, a.Act);
         if (fig.Quad)

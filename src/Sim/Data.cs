@@ -60,7 +60,14 @@ public sealed record FloorDef(int Depth, string Name, string Theme);
 /// <summary>The game's tables: classes, skills, monsters, item bases, affixes, floors. All the numbers are here.</summary>
 public static class Data
 {
-    public const int MaxLevel = 30, Bottom = 10, PackSize = 40;
+    public const int MaxLevel = 60, Bottom = 10, PackSize = 40;
+
+    /// <summary>
+    /// The tiers: after Vorgath the deep can be gone down again, each time 20 levels harder, the hero's resistances
+    /// 20 lower. Names for the floors' titles and the title screen.
+    /// </summary>
+    public static readonly string[] Tiers = { "Embers", "Smouldering", "Inferno" };
+    public const int TierLevels = 20, TierResist = 20;
 
     public static readonly FloorDef[] Floors =
     {
@@ -222,7 +229,7 @@ public static class Data
         new("boar", "Carrion Boar", "body-carrion-boar", 1.1, Ai.Charger, 3.2, 40, 4, 9, Elem.Phys, 1.4, 1.3, 24, 3, 8, 1, 3, Radius: 0.55, Quad: true, Clip: "bite", Armour: 15),
         new("hound", "Cinder Hound", "body-cinder-hound", 0.9, Ai.Melee, 4.6, 26, 4, 8, Elem.Fire, 1.1, 0.8, 18, 6, 10, 3, 5, Radius: 0.4, Quad: true, Clip: "bite", Resist: 50),
         new("lich", "Lich", "body-lich", 2.2, Ai.Caster, 2.4, 60, 6, 12, Elem.Cold, 9, 1.5, 60, 99, 99, 1, 1, Clip: "point", Missile: "frost", Resist: 40, Armour: 20),
-        new("vorgath", "Vorgath the Ashen Warden", "body-boss", 3.0, Ai.Boss, 2.6, 650, 10, 20, Elem.Fire, 2.2, 1.4, 2500, 10, 10, 1, 1, Clip: "overhead", Missile: "ember", Radius: 0.9, Armour: 60, Resist: 40),
+        new("vorgath", "Vorgath the Ashen Warden", "body-boss", 3.0, Ai.Boss, 2.6, 650, 10, 20, Elem.Fire, 2.2, 1.4, 300, 10, 10, 1, 1, Clip: "overhead", Missile: "ember", Radius: 0.9, Armour: 60, Resist: 40),
     };
 
     /// <summary>The named foes the elder's quests send you after: a monster made stronger, with its own name.</summary>

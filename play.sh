@@ -8,6 +8,7 @@
 #   ./play.sh --check [--only X]   headless self-check
 #   ./play.sh --shots         screenshot walkthrough to shots/*.png
 #   ./play.sh --agent         remote-controlled play for an agent (drive it with scripts/agent.sh)
+#   ./play.sh --sounds        every sound and music mood as WAV files in shots/audio
 #   ./play.sh --reel DIR [GODOT ARGS]   for Reel: the agent folder is DIR, the game holds still between commands
 #                             (add --write-movie F --fixed-fps 30 to film it; --reel-live lets it run)
 #
@@ -20,7 +21,9 @@ case "${1:-}" in
     --check)   shift; exec bash scripts/check.sh "$@" ;;
     --shots)   shift; exec bash scripts/shots.sh "$@" ;;
     --agent)   shift; exec bash scripts/agent-run.sh "$@" ;;
-    --help|-h) sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --sounds)  shift; source scripts/common.sh; require_godot; build_if_stale
+               exec "$GODOT" --headless --path "$PROJECT_ARG" -- --sounds ;;
+    --help|-h) sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 source scripts/common.sh
 require_godot

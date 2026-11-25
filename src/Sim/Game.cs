@@ -34,6 +34,17 @@ public sealed class Actor
     /// thrown back; drawn larger by <see cref="Scale"/>.</summary>
     public bool Boss;
     public double Scale = 1;
+    /// <summary>Lasting harm: burning and poisoned (seconds left, damage a second), frozen solid (seconds left).</summary>
+    public double Burn, BurnDps, Poison, PoisonDps, Frozen, DotT;
+    /// <summary>What ails it, in words (burning, poisoned, frozen, chilled, stunned).</summary>
+    public IEnumerable<string> Ailments()
+    {
+        if (Burn > 0) yield return "burning";
+        if (Poison > 0) yield return "poisoned";
+        if (Frozen > 0) yield return "frozen";
+        else if (Slow > 0) yield return "chilled";
+        if (Stun > 0) yield return "stunned";
+    }
     public int Pack;
     public double Think, DmgX = 1, Accuracy, Defense;
     public int Resist;
@@ -178,7 +189,43 @@ public sealed partial class Game
     public FloorState Here => Floors[Depth];
 
     /// <summary>The level of what lives here: the floor's, or in a lair the map's.</summary>
-    public int AreaLevel => Depth >= Data.LairBase ? Lair?.Level ?? 1 : Data.MonLevel(Depth);
+    public int AreaLevel => Depth >= Data.LairBase ? Lair?.Level ?? 1 : LevelOf(Depth);
+
+    /// <summary>The tier the game is in (Data.Tiers): 0 until Vorgath has fallen and the hero goes down again.</summary>
+    public int Tier;
+
+    /// <summary>A floor's monster level in this tier.</summary>
+    public int LevelOf(int depth) => Data.MonLevel(depth) + Tier * Data.TierLevels;
+
+    /// <summary>The place's name, with the tier after the first ("The Barrow, Upper Graves (Smouldering)").</summary>
+    public string PlaceName => Map.Def.Name + (Tier > 0 && Depth > 0 && Depth < Data.LairBase ? $" ({Data.Tiers[Tier]})" : "");
+
+    /// <summary>Can the hero go down again, harder (Vorgath slain, a tier left)?</summary>
+    public bool CanGoDeeper => Won && Tier < Data.Tiers.Length - 1;
+
+    /// <summary>
+    /// Down again, a tier harder: the deep fills up afresh with monsters 20 levels stronger, the hero's resistances
+    /// drop by 20, the quests and the waystones start over; the hero keeps level, items, gold and stash.
+    /// </summary>
+    public string GoDeeper()
+    {
+        if (!CanGoDeeper) return "not yet";
+        Tier++;
+        Hero.Tier = Tier;
+        Hero.Changed();
+        FloorState village = Floors.TryGetValue(0, out FloorState v) ? v : null;
+        Floors.Clear();
+        if (village != null) Floors[0] = village;
+        Hero.Quests.Clear();
+        Hero.Waystones = new HashSet<int> { 0 };
+        Hero.Deepest = 0;
+        Won = false;
+        if (Depth >= Data.LairBase) Lair = null;
+        PortalDepth = 0;
+        if (Depth != 0) Enter(0, null);
+        Emit(new Ev { Kind = "tier", V = Tier, Text = Data.Tiers[Tier] });
+        return null;
+    }
 
     /// <summary>A lair whose portal a treasure map has opened (null: none): which, from what, to where it leads back.</summary>
     public LairState Lair;
@@ -264,7 +311,7 @@ public sealed partial class Game
     public Actor MakeMonster(string id, double x, double y, int depth, bool champion = false, string unique = null, int pack = 0, int level = 0)
     {
         MonDef m = Data.Mon(id);
-        int lvl = (level > 0 ? level : Data.MonLevel(depth)) + (champion ? 2 : 0) + (unique != null ? 3 : 0);
+        int lvl = (level > 0 ? level : LevelOf(depth)) + (champion ? 2 : 0) + (unique != null ? 3 : 0);
         double life = m.Life * (1 + 0.2 * (lvl - 1)), dmg = 0.8 * (1 + 0.1 * (lvl - 1));
         var u = Data.Uniques.FirstOrDefault(q => q.title == unique);
         Data.LairDef lb = unique == null ? null : Data.Lairs.FirstOrDefault(l => l.BossTitle == unique);
@@ -317,6 +364,7 @@ public sealed partial class Game
             if (Depth == 0) { Me.Life = Math.Min(Me.MaxLife, Me.Life + Me.MaxLife * 0.05 * dt); }
         }
         Timers(Me, dt);
+        if (Me.Alive) Dots(Me, dt);
         if (Hero.BlessingLeft > 0)
         {
             Hero.BlessingLeft -= dt;
@@ -331,6 +379,8 @@ public sealed partial class Game
         {
             if (!a.Alive) { a.DeadT += dt; continue; }
             Timers(a, dt);
+            Dots(a, dt);
+            if (!a.Alive) continue;
             if (!a.Npc) MonsterThink(a, dt);
             Act(a, dt);
         }
@@ -352,6 +402,31 @@ public sealed partial class Game
         a.Hidden = Math.Max(0, a.Hidden - dt);
         a.ShieldT = Math.Max(0, a.ShieldT - dt);
         if (a.ShieldT <= 0) a.Shield = 0;
+        a.Frozen = Math.Max(0, a.Frozen - dt);
+        a.Burn = Math.Max(0, a.Burn - dt);
+        a.Poison = Math.Max(0, a.Poison - dt);
+    }
+
+    /// <summary>Burning and poison bite every half second (fire through the resistance to it; poison through nothing).</summary>
+    private void Dots(Actor a, double dt)
+    {
+        if (a.Burn <= 0 && a.Poison <= 0) { a.DotT = 0; return; }
+        a.DotT -= dt;
+        if (a.DotT > 0) return;
+        a.DotT = 0.5;
+        if (a.Hero)
+        {
+            if (Depth == 0) return;
+            double d = (a.Burn > 0 ? a.BurnDps * 0.5 * (1 - Hero.S.FireRes / 100.0) : 0) + (a.Poison > 0 ? a.PoisonDps * 0.5 : 0);
+            d = Math.Round(d);
+            if (d <= 0) return;
+            Me.Life -= d;
+            Emit(new Ev { Kind = "hurt", A = 0, X = Me.X, Y = Me.Y, V = (int)d, E = a.Burn > 0 ? Elem.Fire : Elem.Phys });
+            if (Me.Life <= 0) { Me.Life = 0; HeroDies(null); }
+            return;
+        }
+        if (a.Burn > 0) HurtFoe(a, a.BurnDps * 0.5, Elem.Fire, false, 0, true);
+        if (a.Poison > 0 && a.Alive) HurtFoe(a, a.PoisonDps * 0.5, Elem.Phys, false, 0, true);
     }
 
     /// <summary>The cells around the hero are seen (for the map).</summary>
@@ -467,7 +542,7 @@ public sealed partial class Game
     public void OrderTalk(int npc) => Order = new Order { Kind = "talk", Target = npc };
     public void Halt() { Order = new Order(); if (Me.Act == "walk") Me.Act = "idle"; Me.Path.Clear(); }
 
-    private bool Busy(Actor a) => a.Act is "attack" or "cast" or "hit" or "leap" or "dead" || a.Stun > 0;
+    private bool Busy(Actor a) => a.Act is "attack" or "cast" or "hit" or "leap" or "dead" || a.Stun > 0 || a.Frozen > 0;
 
     private void HeroThink(double dt)
     {
@@ -606,9 +681,12 @@ public sealed partial class Game
 
     private void Wake(Actor a)
     {
+        bool voiced = false;
         foreach (Actor o in Here.Actors.Where(o => o.Alive && !o.Npc && (o == a || (a.Pack > 0 && o.Pack == a.Pack))))
         {
             if (!o.Awake && o.Boss) Emit(new Ev { Kind = "boss", A = o.Id, Text = o.Name });
+            // One voice for a pack waking: a growl, a groan, a rattle, a shriek.
+            else if (!o.Awake && !voiced) { voiced = true; Emit(new Ev { Kind = "wake", A = o.Id, X = o.X, Y = o.Y, Text = o.Def }); }
             o.Awake = true;
         }
     }
@@ -1006,13 +1084,30 @@ public sealed partial class Game
     // ---- damage -----------------------------------------------------------------------------------------------------
 
     /// <summary>Damage to a monster after its resistance; it wakes, may stagger, may die. Returns what it took.</summary>
-    private double HurtFoe(Actor t, double amount, Elem e, bool crit, double slow)
+    private double HurtFoe(Actor t, double amount, Elem e, bool crit, double slow, bool dot = false)
     {
         if (!t.Alive) return 0;
-        double res = e == Elem.Phys ? (t.Has("stone") ? 0.4 : 0) : t.Resist / 100.0;
+        double res = e == Elem.Phys ? (t.Has("stone") && !dot ? 0.4 : 0) : t.Resist / 100.0;
         double dmg = Math.Max(1, Math.Round(amount * (1 - res)));
         t.Life -= dmg;
         if (slow > 0) t.Slow = Math.Max(t.Slow, slow);
+        if (!dot)
+        {
+            // Fire keeps burning for three seconds (a fifth of the hit a second); a cold critical freezes it solid.
+            if (e == Elem.Fire && dmg >= 2)
+            {
+                if (t.Burn <= 0) Emit(new Ev { Kind = "ailing", A = t.Id, Text = "burning" });
+                t.BurnDps = Math.Max(t.Burn > 0 ? t.BurnDps : 0, dmg * 0.2);
+                t.Burn = 3;
+            }
+            if (e == Elem.Cold && crit && !t.Boss && t.Life > 0)
+            {
+                t.Frozen = 1.2;
+                // Frozen mid-blow, the blow is lost.
+                if (t.Act is "attack" or "cast" or "walk") { t.Act = "idle"; t.Path.Clear(); }
+                Emit(new Ev { Kind = "ailing", A = t.Id, Text = "frozen" });
+            }
+        }
         Emit(new Ev { Kind = "hit", A = t.Id, X = t.X, Y = t.Y, V = (int)dmg, E = e, Crit = crit });
         if (!t.Awake) Wake(t);
         if (t.Life <= 0) { Die(t); return dmg; }
@@ -1049,6 +1144,9 @@ public sealed partial class Game
         if (dmg <= 0) return;
         Me.Life -= dmg;
         Emit(new Ev { Kind = "hurt", A = 0, X = Me.X, Y = Me.Y, V = (int)dmg, E = e });
+        // Fire clings for two seconds; a hag's or a ghoul's blow poisons for four.
+        if (e == Elem.Fire && dmg >= 2) { Me.BurnDps = Math.Max(Me.Burn > 0 ? Me.BurnDps : 0, dmg * 0.15); Me.Burn = 2; }
+        if (melee && from?.Def is "hag" or "ghoul") { Me.PoisonDps = Math.Max(Me.Poison > 0 ? Me.PoisonDps : 0, dmg * 0.2); Me.Poison = 4; }
         if (Me.Life <= 0) { Me.Life = 0; HeroDies(from); return; }
         if (dmg > Me.MaxLife * 0.2 && Me.Act is "idle" or "walk")
         {
@@ -1445,7 +1543,9 @@ public sealed partial class Game
                 return q.done;
             }
         }
-        return "Rest, if you can. The village is safer for what you have done.";
+        return CanGoDeeper
+            ? "The fire is out, they say. Then why do the stones still sweat? Something stirs further down than Vorgath ever went. If you would go again, it will be worse."
+            : "Rest, if you can. The village is safer for what you have done.";
     }
 
     private void Reward(string quest)

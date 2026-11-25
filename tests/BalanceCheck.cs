@@ -44,8 +44,26 @@ public partial class SelfCheck
                 }
             }
             report.Append($"  kills {g.Hero.Kills}, gold {g.Hero.Gold}, {(g.Won ? "WON" : "not won")}\n");
-            Check(g.Won, $"{c}: a plain bot beats Vorgath");
+            bool won = g.Won;
+            Check(won, $"{c}: a plain bot beats Vorgath");
             Check(totalDeaths < 25, $"{c}: and dies fewer than 25 times on the way ({totalDeaths})");
+            // The second tier, from where the first left the hero (reported, not judged: it should be hard).
+            if (g.Won && g.GoDeeper() == null)
+            {
+                report.Append($"  {"",-9}");
+                int deaths2 = 0;
+                for (int depth = 1; depth <= Data.Bottom; depth++)
+                {
+                    g.Enter(depth, null);
+                    g.Hero.Waystones.Add(depth);
+                    int d0 = g.Hero.Deaths;
+                    double t0 = g.Time;
+                    bot.Clear(depth, 900);
+                    deaths2 += g.Hero.Deaths - d0;
+                    report.Append($" {depth}:{g.Hero.Level}/{g.Hero.Deaths - d0}/{(g.Time - t0) / 60:0.0}");
+                }
+                report.Append($"  {Data.Tiers[1]}: {(g.Won ? "WON" : "not won")}, {deaths2} deaths\n");
+            }
         }
         GD.Print(report.ToString());
     }

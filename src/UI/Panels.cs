@@ -425,6 +425,12 @@ public partial class TalkPanel : GamePanel
                 s.Open("right", "inventory");
             }));
         }
+        if (s.TalkingTo == "elder" && G.CanGoDeeper)
+            row.AddChild(UITheme.B($"Go down again: {Data.Tiers[G.Tier + 1]}", () =>
+            {
+                G.GoDeeper();
+                s.Open("centre", "");
+            }, 15, "Monsters 20 levels stronger, your resistances 20 lower; the quests start over. You keep everything you carry."));
         if (s.TalkingTo == "elder")
         {
             // The elder can unlearn the hero's points: free once, then for gold.

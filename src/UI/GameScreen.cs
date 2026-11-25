@@ -27,7 +27,8 @@ public partial class GameScreen : Control
     /// <summary>On a touchscreen, with no right button: taps use the right-hand skill while this is on.</summary>
     private bool _skillTaps;
     public static bool Touch => DisplayServer.IsTouchscreenAvailable();
-    private double _hold, _sinceSave;
+    private double _hold, _sinceSave, _stepT;
+    private readonly double[] _ambientT = new double[4];
     private Actor _hover;
     private Drop _hoverDrop;
     private readonly List<(string text, Color c, double t)> _log = new();
@@ -68,7 +69,7 @@ public partial class GameScreen : Control
         _centre = Holder(); UITheme.Anchor(_centre, 0.5f, 0.2f, 0.5f, 0.2f, -300, 0, 300, 0);
         Sounds.Mood(Sounds.MoodFor(Game.Depth));
         SwordCursor();
-        Banner(Game.Map.Def.Name);
+        Banner(Game.PlaceName);
         GrabFocus();
     }
 
@@ -254,7 +255,28 @@ public partial class GameScreen : Control
         _log.RemoveAll(l => l.t > 9);
         _bannerT -= delta;
         RefreshBand();
+        Listen(delta);
         _hud.QueueRedraw();
+    }
+
+    /// <summary>Footsteps while the hero walks; the place's own sounds now and then.</summary>
+    private void Listen(double dt)
+    {
+        if (CentrePanel == "menu") return;
+        if (Game.Me.Act == "walk")
+        {
+            _stepT -= dt * Game.Hero.S.MoveSpeed / 4.6;
+            if (_stepT <= 0) { _stepT = 0.34; Sounds.Play(GD.Randf() < 0.5f ? "step" : "step2", 0.18f, 0.12f, 0); }
+        }
+        var amb = Sounds.Ambience(Game.Map.Def.Theme);
+        for (int k = 0; k < amb.Length && k < _ambientT.Length; k++)
+        {
+            _ambientT[k] -= dt;
+            if (_ambientT[k] > 0) continue;
+            var (sound, min, max, volume) = amb[k];
+            _ambientT[k] = min + GD.Randf() * (max - min);
+            Sounds.Play(sound, volume, 0.15f, 0);
+        }
     }
 
     private void Happened(Ev e)
@@ -297,7 +319,7 @@ public partial class GameScreen : Control
                 Autosave();
                 Sounds.Play("stairs", 0.6f);
                 Sounds.Mood(Sounds.MoodFor(e.V));
-                Banner(e.Text);
+                Banner(Game.PlaceName);
                 CloseAll();
                 break;
             case "waystone": Sounds.Play("waystone", 0.7f); Say(e.Text, new Color(0.5f, 0.7f, 1f)); break;
@@ -309,10 +331,13 @@ public partial class GameScreen : Control
             case "reward": Say("Your reward is given.", UITheme.Accent); Refresh(); break;
             case "say": Say(e.Text, a != null ? new Color(1f, 0.6f, 0.4f) : UITheme.Dim); if (a != null) Banner($"\"{e.Text}\""); break;
             case "boss": Sounds.Play("boss", 0.9f); Banner(e.Text); break;
+            case "ailing": if (e.Text == "frozen") Sounds.Play("frost", 0.4f, 0.1f, 120); break;
+            case "wake": if (Game.Dist(e.X, e.Y, Game.Me.X, Game.Me.Y) < 16) Sounds.Play(Sounds.Voice(e.Text), 0.55f, 0.2f, 300); break;
             case "won": Sounds.Play("win", 0.9f); Banner("Victory"); Say(e.Text, UITheme.Accent); Open("centre", "notice"); break;
             case "portal": Sounds.Play("waystone", 0.6f); break;
             case "shieldbreak": Say("Your arcane shield breaks.", UITheme.Dim); break;
             case "socket": Sounds.Play("magicdrop", 0.7f); Say(e.Text, new Color(0.6f, 0.75f, 1f)); break;
+            case "tier": Sounds.Play("boss", 0.8f); Banner(e.Text); Say($"The deep is {e.Text} now: everything below is stronger, and the quests begin again.", UITheme.Accent); Refresh(); break;
             case "restock": Say("The deep has filled again since you were here.", UITheme.Dim); break;
             case "lairportal": Sounds.Play("boss", 0.6f); Say($"The map burns away: a portal to {e.Text} opens.", new Color(1f, 0.5f, 0.3f)); break;
             case "lair": Banner(e.Text); Say("No way back but the way out, and it closes behind you.", UITheme.Dim); break;
@@ -523,7 +548,9 @@ public partial class GameScreen : Control
         double frac = h.Level >= Data.MaxLevel ? 1 : h.Xp / (double)Data.XpToNext(h.Level);
         _hud.DrawRect(new Rect2(x0, size.Y - Band + 8, x1 - x0, 7), new Color(0.12f, 0.1f, 0.08f));
         _hud.DrawRect(new Rect2(x0, size.Y - Band + 8, (float)((x1 - x0) * frac), 7), new Color(0.85f, 0.65f, 0.25f));
-        _hud.DrawString(font, new Vector2(x0, size.Y - 10), $"Level {h.Level} {h.Class}   {h.Gold} gold   {Game.Map.Def.Name}", HorizontalAlignment.Left, -1, 15, UITheme.Dim);
+        _hud.DrawString(font, new Vector2(x0, size.Y - 10), $"Level {h.Level} {h.Class}   {h.Gold} gold   {Game.PlaceName}", HorizontalAlignment.Left, -1, 15, UITheme.Dim);
+        string ails = string.Join(", ", me.Ailments());
+        if (ails.Length > 0) _hud.DrawString(font, new Vector2(30, size.Y - 160), char.ToUpper(ails[0]) + ails[1..], HorizontalAlignment.Left, -1, 16, me.Burn > 0 ? new Color(1f, 0.55f, 0.2f) : me.Poison > 0 ? new Color(0.55f, 1f, 0.35f) : new Color(0.6f, 0.8f, 1f));
         if (me.ShieldT > 0) _hud.DrawString(font, new Vector2(x1 - 220, size.Y - 10), $"Arcane shield {me.Shield:0}", HorizontalAlignment.Left, -1, 15, new Color(0.5f, 0.7f, 1f));
         if (h.BlessingLeft > 0)
         {
@@ -540,7 +567,8 @@ public partial class GameScreen : Control
             _hud.DrawRect(new Rect2(cx - w / 2, 14, (float)(w * t.Life / t.MaxLife), 26), new Color(0.55f, 0.08f, 0.06f, 0.95f));
             Color nc = t.Title != null ? (t.Champion ? new Color(0.5f, 0.65f, 1f) : new Color(0.95f, 0.8f, 0.4f)) : UITheme.Text;
             _hud.DrawString(font, new Vector2(cx - w / 2, 34), t.Name, HorizontalAlignment.Center, w, 17, nc);
-            string traits = t.Traits.Count > 0 ? string.Join(", ", t.Traits.Select(Data.TraitWord)) + ", " : "";
+            string traits = string.Join(", ", t.Traits.Select(Data.TraitWord).Concat(t.Ailments()));
+            if (traits.Length > 0) traits += ", ";
             _hud.DrawString(font, new Vector2(cx - w / 2, 58), $"{traits}level {t.Level}", HorizontalAlignment.Center, w, 13, t.Traits.Count > 0 ? World3D.TraitColour(t.Traits[0]) : UITheme.Dim);
         }
         else if (_hover?.Npc == true)

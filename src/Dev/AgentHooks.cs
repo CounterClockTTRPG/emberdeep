@@ -203,14 +203,14 @@ public static class AgentHooks
         {
             string why = G().Travel(AgentServer.Int(a[1]));
             await agent.Frames(3);
-            return why ?? $"at {G().Map.Def.Name}";
+            return why ?? $"at {G().PlaceName}";
         });
         agent.Command("descend", "descend [DEPTH]        (debug) straight to a floor", async a =>
         {
             Game g = G();
             g.Enter(a.Length > 1 ? AgentServer.Int(a[1]) : g.Depth + 1, null);
             await agent.Frames(3);
-            return $"at {g.Map.Def.Name}";
+            return $"at {g.PlaceName}";
         });
         agent.Command("panel", "panel inventory|character|skills|none   open a panel", async a =>
         {
@@ -294,7 +294,7 @@ public static class AgentHooks
         Stats st = h.S;
         var sb = new StringBuilder();
         sb.Append(FormattableString.Invariant(
-            $"{g.Map.Def.Name} (depth {g.Depth}); time {g.Time:0.0}s; {(g.Won ? "WON; " : "")}panels [{gs?.LeftPanel}|{gs?.RightPanel}|{gs?.CentrePanel}]\n"));
+            $"{g.PlaceName} (depth {g.Depth}); time {g.Time:0.0}s; {(g.Won ? "WON; " : "")}panels [{gs?.LeftPanel}|{gs?.RightPanel}|{gs?.CentrePanel}]\n"));
         sb.Append(FormattableString.Invariant(
             $"hero: {h.Class} level {h.Level} xp {h.Xp}/{Data.XpToNext(h.Level)} at {me.X:0.0},{me.Y:0.0} life {me.Life:0}/{me.MaxLife:0} mana {me.Mana:0}/{me.MaxMana:0} gold {h.Gold} act {me.Act} order {g.Order.Kind}{(me.Shield > 0 ? $" shield {me.Shield:0}" : "")} points {h.AttrPoints}/{h.SkillPoints} dmg {st.DMin:0}-{st.DMax:0} armour {st.Armour:0}\n"));
         sb.Append("belt: " + string.Join(" ", h.Belt.Select((it, i) => $"{i + 1}:{(it == null ? "-" : it.Base + "x" + it.Count)}")) + $"; pack {Data.PackSize - h.Free()}/{Data.PackSize}\n");

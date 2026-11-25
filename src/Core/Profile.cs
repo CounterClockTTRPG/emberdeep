@@ -60,7 +60,7 @@ public sealed class Profile
     public static string Peek(int slot)
     {
         Game g = LoadGame(slot);
-        return g == null ? null : $"{g.Hero.Name}, level {g.Hero.Level} {g.Hero.Class} -- {Data.Floor(g.Depth).Name}{(g.Won ? " -- the Warden is slain" : "")}";
+        return g == null ? null : $"{g.Hero.Name}, level {g.Hero.Level} {g.Hero.Class} -- {g.PlaceName}{(g.Won ? " -- the Warden is slain" : "")}";
     }
 
     public static void DeleteSlot(int slot)

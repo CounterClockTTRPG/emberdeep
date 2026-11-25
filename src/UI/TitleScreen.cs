@@ -114,7 +114,7 @@ public partial class TitleScreen : Control
             int s = slot;
             Game g = Profile.LoadGame(s);
             string line = g == null ? "Empty" : g.Hero.Name == g.Hero.Class.ToString() ? $"{g.Hero.Class}, level {g.Hero.Level}" : $"{g.Hero.Name}, level {g.Hero.Level} {g.Hero.Class}";
-            string sub = g == null ? "A new hero can begin here" : g.Won ? "The Warden is slain" : Data.Floor(g.Depth).Name;
+            string sub = g == null ? "A new hero can begin here" : g.Won ? $"The Warden is slain{(g.Tier > 0 ? $" ({Data.Tiers[g.Tier]})" : "")}" : g.PlaceName;
             col.AddChild(new SlotRow($"Slot {s}", line, sub, s == _selected, () => { _selected = s; Build(); Show(); }));
         }
         col.AddChild(new Control { CustomMinimumSize = new Vector2(0, 22) });

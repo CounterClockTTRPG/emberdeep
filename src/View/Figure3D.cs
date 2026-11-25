@@ -424,6 +424,17 @@ public partial class Figure3D : Node3D
         if (again) _player.Seek(0, true);
     }
 
+    private bool _frozen;
+
+    /// <summary>Hold still where the clip is (frozen solid), or go on.</summary>
+    public void Freeze(bool on)
+    {
+        if (_player == null || on == _frozen) return;
+        _frozen = on;
+        if (on) _player.Pause();
+        else _player.Play();
+    }
+
     /// <summary>How long a clip runs at speed 1, in seconds (0 when there is none).</summary>
     public float Length(string clip) => _player != null && _player.HasAnimation(clip) ? (float)_player.GetAnimation(clip).Length : 0;
 
