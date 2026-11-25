@@ -1,70 +1,32 @@
-# godot-starter
+# Emberdeep
 
-A template for a new Godot 4.7 C# game with the plumbing every game needs already done and tested, so the
-first day goes on the game itself. Use it with an agent or by hand.
+An original isometric action RPG in Godot 4.7 (.NET / C#), in the classic dungeon-crawler tradition with its own
+names, lore and look. Below the village of Emberwick the old graves go down, and down, to a fire that should have
+stayed asleep.
+
+- **Three heroes:** the Wanderer (sword and shield), the Rogue (bow), the Sorcerer (fire, frost, lightning). Each
+  has seven skills, two of them passive, learned with a point a level, up to rank 10.
+- **Ten floors** generated from the seed: the Barrow, the Catacombs, the Ember Halls, and the Warden's Throne. Packs
+  of monsters with champions, named quest foes, chests, a waystone on every floor.
+- **Loot:** 28 item bases (weapons, armour, shields, rings, amulets), plain, magic and rare, with 30 affixes; draughts,
+  waystone scrolls, gold; the smith Oskar buys and sells, the healer Maren mends you, the stash keeps your things.
+- **Emberwick:** Elder Corwin's three quests (Mother Wort, Ember-Priest Kael, Vorgath), the waystone, the way down.
+- **Rigged, animated 3D models** for every hero, monster and village folk, made with assetgen on two shared skeletons;
+  the clips are retargeted to each body at run time.
 
 ```sh
-bin/new-game.sh Gemrun            # makes ../gemrun: renamed, building blocks installed, first commit made
-cd ../gemrun
-./play.sh --check                 # the self-check: passes from the first minute
-./play.sh                         # play the sample
+./play.sh                          # play (Godot and dotnet paths in .env)
+./play.sh --check                  # the self-check
+./play.sh --check --only Balance   # a bot plays each class to Vorgath and reports
+./play.sh --shots                  # the screenshot walkthrough into shots/
+./play.sh --agent                  # remote control: scripts/agent.sh "new rogue; state"
+python3 scripts/assets.py          # bring new art in from ../assetgen
 ```
 
-## What a new game gets
+Controls: left click to walk, fight, pick up, use and talk (hold to keep walking); right click for the chosen skill
+(hold to repeat); Shift + left click to attack in place; Q W E R T choose the skill; 1-4 the belt; I C S the
+inventory, character and skills; Tab the map; the wheel zooms; Esc closes panels.
 
-- **Run scripts that work from WSL** with Windows Godot and Windows `dotnet.exe` (UNC paths, CRLF stripped), or
-  with Linux ones. Paths go in `.env`. Commands:
-  - `./play.sh` plays the game.
-  - `--build` builds in seconds through dotnet.
-  - `--check [--only X]` runs the headless self-check.
-  - `--shots` runs the screenshot walkthrough.
-  - `--agent` starts remote control.
-  - `--editor` opens the Godot editor.
-  - `scripts/export.sh` makes a Windows build and runs the self-check against it.
-- **Structure:**
-  - `src/Sim` holds the rules as plain data with no Godot types, so they are quick to test and easy to save.
-  - `src/Core` holds `Root` (the screen flow and command-line flags), `Profile` (settings and three save slots,
-    with scratch files for tests and the agent's own slot), `Saves` (gzipped JSON, written atomically) and
-    `Sounds`.
-  - `src/UI` holds `UITheme` (a named palette, fonts from `assets/fonts`, a Theme and widget builders), plus a
-    title screen and a game screen.
-- **A self-check** (`tests/`): methods marked `[Section]` run in order, using `Check` and `Eq`. `--only X` runs
-  some of them, a section that throws counts as failed, and the exit code is 1 on any failure.
-- **[godot-agent](https://github.com/CounterClockTTRPG/godot-agent)** is wired in with `state` (the board in
-  ASCII), map cells for `at`/`drag`, and game commands. Game time passes only while a command runs.
-- **[sfxgen](https://github.com/CounterClockTTRPG/sfxgen)** makes every sound and the music at start-up from
-  seeds and words. There are no audio files.
-- **A screenshot walkthrough** with a fixed seed, ready for
-  [shotkit](https://github.com/CounterClockTTRPG/shotkit) baselines (`shotkit check shots docs/baseline`).
-- **A CLAUDE.md** with the commands, the layout and the conventions, for the agent that works on the game.
-- **The sample game**, "gather the gems": a grid, walls, gems appearing over time, ten to win. It is small enough
-  to read in a minute and replace in an hour.
+See CLAUDE.md for the layout. The backlog is in Tasker, project EMB.
 
-## How the parts are tested
-
-`bin/selftest.sh` checks the whole kit from start to finish:
-1. Makes a game from the template in a scratch folder.
-2. Builds it and runs its self-check.
-3. Runs the walkthrough and checks the three screenshots exist.
-4. Plays it through godot-agent: `ui`, a new game, `state`, keys, a wait (time passes only then), `at`, a
-   screenshot, pressing a button by its label, `tree` and `perf`.
-
-That tests godot-agent and sfxgen inside a real game as well. Run it after changing the template or either
-building block.
-
-## new-game.sh
-
-`bin/new-game.sh NAME [DIR]`. The NAME must be a C# identifier starting with a capital: it becomes the namespace,
-the assembly, the project name and the title. The script:
-- copies `template/`;
-- replaces `Starter`, `STARTER` and `starter` with the new name;
-- installs godot-agent and sfxgen from sibling checkouts (`../godot-agent`, `../sfxgen`), or clones them from
-  GitHub;
-- runs `git init` and makes a first commit.
-
-To update the building blocks in a game later, run `../godot-agent/bin/install.sh .` or
-`../sfxgen/bin/install.sh .`.
-
-## Licence
-
-MIT. The sample game and template code are yours to change without credit.
+MIT licence.

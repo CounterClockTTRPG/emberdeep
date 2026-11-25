@@ -1,0 +1,10 @@
+# Emberdeep models: name, assetgen asset id (scripts/assets.py copies the latest version of each).
+barrel prop-barrel-7cfca8
+brazier prop-brazier-21813d
+chest prop-chest-61d5a5
+house prop-house-0ff7fb
+pillar prop-pillar-12a46a
+tomb prop-tomb-52896f
+tree prop-tree-bf0deb
+waystone prop-waystone-b34d17
+well prop-well-9a8b2e

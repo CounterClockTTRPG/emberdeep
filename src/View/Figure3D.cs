@@ -1,0 +1,286 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Godot;
+
+namespace Emberdeep;
+
+/// <summary>
+/// The models, read at run time from assets/ (glTF bytes, no import step): assets/figures holds the rigged bodies
+/// (body-*), the things they hold (held-*) and the animation clips, humanoid (clip-*) and quadruped (qclip-*), all on
+/// assetgen's two skeleton templates so any clip plays on any body of its kind; assets/models holds the props.
+/// Each folder has a manifest.txt, since an exported build can read a file but not list a folder.
+/// </summary>
+public static class Kit
+{
+    private static string DirOf(string folder) => FileAccess.FileExists($"res://assets/{folder}/manifest.txt")
+        ? $"res://assets/{folder}" : OS.GetExecutablePath().GetBaseDir() + $"/assets/{folder}";
+
+    private static readonly Dictionary<string, Node3D> _protos = new();
+    private static readonly Dictionary<string, AnimationLibrary> _clips = new();
+    private static readonly Dictionary<string, Texture2D> _icons = new();
+
+    /// <summary>Why clips were left out (the self-check reports it).</summary>
+    public static readonly List<string> Trouble = new();
+
+    /// <summary>A fresh copy of a model (folder "figures" or "models"), or null when there is none.</summary>
+    public static Node3D Part(string name, string folder = "figures")
+    {
+        string key = folder + "/" + name;
+        if (!_protos.TryGetValue(key, out Node3D proto))
+        {
+            proto = null;
+            string path = $"{DirOf(folder)}/{name}.glb";
+            if (FileAccess.FileExists(path))
+            {
+                var doc = new GltfDocument();
+                var state = new GltfState();
+                if (doc.AppendFromBuffer(FileAccess.GetFileAsBytes(path), "", state) == Error.Ok) proto = doc.GenerateScene(state) as Node3D;
+                if (proto != null) DropColliders(proto);
+            }
+            _protos[key] = proto;
+        }
+        return proto?.Duplicate() as Node3D;
+    }
+
+    public static bool Has(string name, string folder = "figures") => FileAccess.FileExists($"{DirOf(folder)}/{name}.glb");
+
+    /// <summary>An icon from assets/icons (item and skill pictures), or null.</summary>
+    public static Texture2D Icon(string name)
+    {
+        if (name == null) return null;
+        if (_icons.TryGetValue(name, out Texture2D t)) return t;
+        string path = $"{DirOf("icons")}/{name}.png";
+        t = null;
+        if (FileAccess.FileExists(path))
+        {
+            var img = new Image();
+            if (img.LoadPngFromBuffer(FileAccess.GetFileAsBytes(path)) == Error.Ok) t = ImageTexture.CreateFromImage(img);
+        }
+        return _icons[name] = t;
+    }
+
+    /// <summary>The clip names in a manifest, for a prefix (clip- or qclip-).</summary>
+    private static List<string> ClipNames(string prefix)
+    {
+        string mf = $"{DirOf("figures")}/manifest.txt";
+        if (!FileAccess.FileExists(mf)) { Trouble.Add("no figures manifest"); return new List<string>(); }
+        return FileAccess.GetFileAsString(mf).Split('\n').Select(l => l.Trim().Split(' ')[0])
+            .Where(n => n.StartsWith(prefix)).Select(n => n[prefix.Length..]).ToList();
+    }
+
+    public static readonly HashSet<string> Looping = new() { "idle", "walk", "run", "ready", "search", "hammer", "pray" };
+
+    /// <summary>Every clip fitted to one body (they differ in height and rest pose), aimed at its skeleton under "Body".</summary>
+    public static AnimationLibrary Clips(string body, Skeleton3D ours, string skelPath, bool quad)
+    {
+        if (_clips.TryGetValue(body, out AnimationLibrary have)) return have;
+        var lib = _clips[body] = new AnimationLibrary();
+        string prefix = quad ? "qclip-" : "clip-";
+        foreach (string name in ClipNames(prefix))
+        {
+            Node3D scene = Part(prefix + name);
+            var player = scene == null ? null : Find<AnimationPlayer>(scene);
+            string src = player?.GetAnimationList().FirstOrDefault();
+            if (src == null) { Trouble.Add($"{prefix}{name}: no animation"); scene?.Free(); continue; }
+            var anim = (Animation)player.GetAnimation(src).Duplicate(true);
+            Retarget(anim, Find<Skeleton3D>(scene), ours, skelPath);
+            anim.LoopMode = Looping.Contains(name) ? Animation.LoopModeEnum.Linear : Animation.LoopModeEnum.None;
+            lib.AddAnimation(name, anim);
+            scene.Free();
+        }
+        return lib;
+    }
+
+    /// <summary>
+    /// Point every bone track at our skeleton and drop the rest. Rotations carry over (the template's rest pose is
+    /// shared); positions are the clip's movement from its rest, scaled by how much taller or shorter our body is.
+    /// </summary>
+    private static void Retarget(Animation anim, Skeleton3D theirs, Skeleton3D ours, string skelPath)
+    {
+        float ratio = 1;
+        if (theirs != null && ours != null)
+        {
+            int th = theirs.FindBone("hips"), oh = ours.FindBone("hips");
+            if (th >= 0 && oh >= 0)
+            {
+                float a = theirs.GetBoneGlobalRest(th).Origin.Y, b = ours.GetBoneGlobalRest(oh).Origin.Y;
+                if (a > 0.01f && b > 0.01f) ratio = b / a;
+            }
+        }
+        for (int t = anim.GetTrackCount() - 1; t >= 0; t--)
+        {
+            string bone = anim.TrackGetPath(t).GetConcatenatedSubNames();
+            Animation.TrackType type = anim.TrackGetType(t);
+            if (string.IsNullOrEmpty(bone) || type == Animation.TrackType.Scale3D || ours == null || ours.FindBone(bone) < 0) { anim.RemoveTrack(t); continue; }
+            if (type == Animation.TrackType.Position3D && theirs != null && theirs.FindBone(bone) >= 0)
+            {
+                Vector3 theirRest = theirs.GetBoneRest(theirs.FindBone(bone)).Origin, ourRest = ours.GetBoneRest(ours.FindBone(bone)).Origin;
+                for (int k = 0; k < anim.TrackGetKeyCount(t); k++)
+                    anim.TrackSetKeyValue(t, k, ourRest + ((Vector3)anim.TrackGetKeyValue(t, k) - theirRest) * ratio);
+            }
+            anim.TrackSetPath(t, new NodePath($"Body/{skelPath}:{bone}"));
+        }
+    }
+
+    public static T Find<T>(Node n) where T : Node
+    {
+        if (n is T t) return t;
+        foreach (Node c in n.GetChildren()) if (Find<T>(c) is T f) return f;
+        return null;
+    }
+
+    public static Node FindNamed(Node n, string name)
+    {
+        if (n.Name == name) return n;
+        foreach (Node c in n.GetChildren()) if (FindNamed(c, name) is Node f) return f;
+        return null;
+    }
+
+    private static void DropColliders(Node n)
+    {
+        foreach (Node c in n.GetChildren())
+        {
+            string name = c.Name.ToString();
+            if (name.EndsWith("-colonly") || name.EndsWith("-col")) { n.RemoveChild(c); c.Free(); }
+            else DropColliders(c);
+        }
+    }
+
+    /// <summary>The box around every mesh of a model, in the model's own frame.</summary>
+    public static Aabb Bounds(Node3D n)
+    {
+        Aabb? box = null;
+        foreach (MeshInstance3D mi in n.FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>())
+        {
+            if (mi.Mesh == null) continue;
+            Transform3D t = Transform3D.Identity;
+            for (Node p = mi; p != null && p != n; p = p.GetParent()) if (p is Node3D p3) t = p3.Transform * t;
+            Aabb a = t * mi.Mesh.GetAabb();
+            box = box == null ? a : box.Value.Merge(a);
+        }
+        return box ?? new Aabb(Vector3.Zero, Vector3.One);
+    }
+
+    /// <summary>A prop fitted to a size (its largest side), stood on the ground and centred.</summary>
+    public static Node3D Prop(string model, float size)
+    {
+        Node3D m = Part(model, "models");
+        if (m == null) return null;
+        var holder = new Node3D { Name = model };
+        holder.AddChild(m);
+        Aabb box = Bounds(m);
+        float big = Mathf.Max(box.Size.X, Mathf.Max(box.Size.Y, box.Size.Z));
+        float s = big > 0.01f ? size / big : 1;
+        m.Scale = Vector3.One * s;
+        Vector3 c = box.GetCenter();
+        m.Position = new Vector3(-c.X * s, -box.Position.Y * s, -c.Z * s);
+        return holder;
+    }
+}
+
+/// <summary>
+/// One figure: a rigged body, things held in its sockets, and an animation player with every clip of its skeleton.
+/// <see cref="Hold"/> sets what it holds (rebuilt only when that changes) and <see cref="Play"/> what it does.
+/// </summary>
+public partial class Figure3D : Node3D
+{
+    private Node3D _body;
+    private Skeleton3D _skel;
+    private AnimationPlayer _player;
+    private readonly List<Node> _held = new();
+    private string _holding = "", _clip = "";
+    public readonly string BodyName;
+    private readonly float _height;
+    public bool Quad { get; private set; }
+    public bool Loaded => _body != null;
+
+    public Figure3D() { }
+
+    public Figure3D(string body, float height) { BodyName = body; _height = height; }
+
+    public override void _Ready()
+    {
+        _body = Kit.Part(BodyName);
+        if (_body == null) return;
+        _body.Name = "Body";
+        AddChild(_body);
+        _skel = Kit.Find<Skeleton3D>(_body);
+        Quad = _skel != null && _skel.FindBone("paw_fl") >= 0;
+        string skelPath = _skel != null ? _body.GetPathTo(_skel).ToString() : "Skeleton3D";
+        foreach (AnimationPlayer p in _body.FindChildren("*", "AnimationPlayer", true, false).Cast<AnimationPlayer>()) p.QueueFree();
+        _player = new AnimationPlayer { Name = "Anim" };
+        AddChild(_player);
+        _player.RootNode = new NodePath("..");
+        _player.AddAnimationLibrary("", Kit.Clips(BodyName, _skel, skelPath, Quad));
+        Aabb box = Kit.Bounds(_body);
+        float s = box.Size.Y > 0.1f ? _height / box.Size.Y : 1;
+        _body.Scale = Vector3.One * s;
+        _body.Position = new Vector3(0, -box.Position.Y * s, 0);
+    }
+
+    public bool Has(string clip) => _player != null && _player.HasAnimation(clip);
+
+    /// <summary>What it holds: right hand, left hand (a bow), left forearm (a shield).</summary>
+    public void Hold(string right, string left, string forearm)
+    {
+        if (_body == null) return;
+        string key = $"{right}|{left}|{forearm}";
+        if (key == _holding) return;
+        _holding = key;
+        foreach (Node n in _held) n.QueueFree();
+        _held.Clear();
+        Attach(right, "socket_hand_r");
+        Attach(left, "socket_hand_l");
+        Attach(forearm, "socket_forearm_l");
+    }
+
+    private void Attach(string what, string socket)
+    {
+        if (string.IsNullOrEmpty(what)) return;
+        Node3D item = Kit.Part("held-" + what);
+        Node at = Kit.FindNamed(_body, socket);
+        if (item == null || at == null) { item?.Free(); return; }
+        at.AddChild(item);
+        _held.Add(item);
+    }
+
+    /// <summary>Play a clip (the first of the names it has) at a speed; <paramref name="again"/> restarts it even if playing.</summary>
+    public void Play(string clip, float speed = 1, bool again = false, params string[] instead)
+    {
+        if (_player == null) return;
+        if (!_player.HasAnimation(clip)) clip = instead.FirstOrDefault(c => _player.HasAnimation(c)) ?? (_player.HasAnimation("idle") ? "idle" : "");
+        if (clip == "") return;
+        _player.SpeedScale = speed;
+        if (clip == _clip && !again && (_player.IsPlaying() || !Kit.Looping.Contains(clip))) return;
+        _clip = clip;
+        _player.Play(clip, 0.12);
+        if (again) _player.Seek(0, true);
+    }
+
+    /// <summary>How long a clip runs at speed 1, in seconds (0 when there is none).</summary>
+    public float Length(string clip) => _player != null && _player.HasAnimation(clip) ? (float)_player.GetAnimation(clip).Length : 0;
+
+    public string Clip => _clip;
+
+    /// <summary>Tint every surface (a champion's red, a shade's pallor, a hidden rogue's smoke).</summary>
+    public void Tint(Color c, float alpha = 1)
+    {
+        if (_body == null) return;
+        foreach (MeshInstance3D mi in _body.FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>())
+        {
+            if (mi.Mesh == null) continue;
+            for (int s = 0; s < mi.Mesh.GetSurfaceCount(); s++)
+            {
+                if (c == Colors.White && alpha >= 1) { mi.SetSurfaceOverrideMaterial(s, null); continue; }
+                if (mi.Mesh.SurfaceGetMaterial(s) is not BaseMaterial3D m) continue;
+                var x = (BaseMaterial3D)m.Duplicate();
+                Color col = m.AlbedoColor * c;
+                col.A = alpha;
+                x.AlbedoColor = col;
+                if (alpha < 1) x.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+                mi.SetSurfaceOverrideMaterial(s, x);
+            }
+        }
+    }
+}
