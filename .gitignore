@@ -4,3 +4,6 @@ agent/
 shots/
 *.tmp
 /android/
+/build/
+# made by scripts/export-android.sh so the art travels inside the APK as it is
+assets/**/*.import

@@ -283,8 +283,8 @@ public partial class Figure3D : Node3D
     private Node3D _body;
     private Skeleton3D _skel;
     private AnimationPlayer _player;
-    private readonly List<Node> _held = new();
-    private string _holding = "", _clip = "";
+    private readonly List<Node> _held = new(), _worn = new();
+    private string _holding = "", _clip = "", _wearing = "";
     public readonly string BodyName;
     private readonly float _height;
     public bool Quad { get; private set; }
@@ -315,6 +315,77 @@ public partial class Figure3D : Node3D
     }
 
     public bool Has(string clip) => _player != null && _player.HasAnimation(clip);
+
+    /// <summary>The skin regions of a base body each outfit slot covers (assetgen's rig_lib.SLOTS).</summary>
+    private static readonly Dictionary<string, string[]> Hides = new()
+    {
+        ["head"] = new[] { "head" }, ["torso"] = new[] { "torso", "upper_arms" }, ["arms"] = new[] { "forearms", "hands" },
+        ["legs"] = new[] { "thighs", "shins" }, ["feet"] = new[] { "feet" }, ["waist"] = new string[0], ["back"] = new string[0],
+    };
+
+    /// <summary>
+    /// What it wears: outfit pieces (assets/figures/&lt;name&gt;.glb, each skinned to the template), with the slot each
+    /// fills. Each piece's meshes move onto this body's skeleton by bone name; the body's skin regions a slot covers
+    /// (body_torso, body_head...) are hidden under it. Rebuilt only when the list changes.
+    /// </summary>
+    public void Wear(IReadOnlyList<(string piece, string slot)> pieces)
+    {
+        if (_skel == null) return;
+        string key = string.Join(",", pieces.Select(p => p.piece));
+        if (key == _wearing) return;
+        _wearing = key;
+        foreach (Node n in _worn) n.QueueFree();
+        _worn.Clear();
+        var hidden = new HashSet<string>(pieces.SelectMany(p => Hides.TryGetValue(p.slot, out string[] h) ? h : new string[0]));
+        foreach (MeshInstance3D mi in _body.FindChildren("body_*", "MeshInstance3D", true, false).Cast<MeshInstance3D>())
+        {
+            string region = mi.Name.ToString()[5..];
+            mi.Visible = !hidden.Any(h => region == h || region.StartsWith(h + "_"));
+        }
+        foreach (var (piece, _) in pieces) Put(piece);
+    }
+
+    private void Put(string piece)
+    {
+        Node3D part = Kit.Part(piece);
+        if (part == null) return;
+        Skeleton3D theirs = Kit.Find<Skeleton3D>(part);
+        foreach (MeshInstance3D mi in part.FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>().ToList())
+        {
+            if (mi.Skin == null)
+            {
+                // A rigid part riding a bone (a helm's crest, a buckle): onto our bone, where it sat on theirs.
+                BoneAttachment3D on = null;
+                for (Node p = mi.GetParent(); p != null && on == null; p = p.GetParent()) on = p as BoneAttachment3D;
+                if (on == null || _skel.FindBone(on.BoneName) < 0) continue;
+                Transform3D rel = Transform3D.Identity;
+                for (Node n = mi; n != on; n = n.GetParent()) if (n is Node3D n3) rel = n3.Transform * rel;
+                var at = new BoneAttachment3D { BoneName = on.BoneName };
+                _skel.AddChild(at);
+                mi.GetParent().RemoveChild(mi);
+                at.AddChild(mi);
+                mi.Transform = rel;
+                _worn.Add(at);
+                continue;
+            }
+            if (theirs == null) continue;
+            var skin = (Skin)mi.Skin.Duplicate();
+            for (int b = 0; b < skin.GetBindCount(); b++)
+            {
+                string bone = skin.GetBindName(b);
+                if (string.IsNullOrEmpty(bone)) bone = theirs.GetBoneName(skin.GetBindBone(b));
+                int ours = _skel.FindBone(bone);
+                if (ours >= 0) { skin.SetBindName(b, ""); skin.SetBindBone(b, ours); }
+            }
+            mi.GetParent().RemoveChild(mi);
+            _skel.AddChild(mi);
+            mi.Transform = Transform3D.Identity;
+            mi.Skin = skin;
+            mi.Skeleton = mi.GetPathTo(_skel);
+            _worn.Add(mi);
+        }
+        part.Free();
+    }
 
     /// <summary>What it holds: right hand, left hand (a bow), left forearm (a shield).</summary>
     public void Hold(string right, string left, string forearm)

@@ -27,8 +27,15 @@ rolled loot (plain, magic, rare), waystones, quests from the elder. Made from go
     python3 scripts/assets.py   bring the art in from ../assetgen/library (project emberdeep, plus shared clips);
                                 re-run when assetgen finishes more (--list shows what it would copy)
     bash scripts/export.sh [DIR]   Windows build to DIR (default C:/temp/Emberdeep), then the self-check against it.
+    bash scripts/export-android.sh debug APK to build/android/Emberdeep.apk (arm64; installs with adb if a phone is
+                                connected). The Android SDK, JDK and .NET 9 SDK are needed (net9.0 for Android only, see
+                                Emberdeep.csproj); assets/.gdignore steps aside during the export and the art is packed
+                                as-is ("keep" .import files, gitignored).
+    python3 scripts/figures.py  the heroes' base bodies and outfit pieces, asked of the assetgen server (--list)
 
 `--shots` and `--agent` run under `xvfb-run` when there is no display (software Vulkan: slow but fine).
+On a touchscreen there is no right button: tapping the right-hand skill icon turns "skill taps" on (each tap uses that
+skill) and off; Android's back button does what Esc does.
 
 Settings live in `user://settings.json`, games in `user://slot1.sav` .. `slot3.sav`. `--check` and `--shots` use
 scratch files and never touch them. Never kill Godot by image name (`taskkill /IM`): other games may be running

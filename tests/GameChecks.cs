@@ -280,6 +280,31 @@ public partial class SelfCheck
     }
 
     [Section]
+    private void Things()
+    {
+        // A barrel: the hero walks up, swings, it breaks; its cell opens; it stays broken when the floor is made again.
+        Game g = Bare(Cls.Wanderer, 2);
+        Prop barrel = g.Map.Props.First(p => p.Kind == "barrel");
+        Check(barrel.Usable && barrel.Breaks && !g.Map.Walk(barrel.X, barrel.Y), "a barrel is usable and stands in the way");
+        g.Me.X = barrel.X + 0.5; g.Me.Y = barrel.Y + 2.5;
+        if (!g.Map.Walk(g.Me.X, g.Me.Y)) (g.Me.X, g.Me.Y) = (g.Map.Start.x + 0.5, g.Map.Start.y + 0.5);
+        g.OrderUse(barrel.Id);
+        Run(g, 12);
+        Check(g.Here.Opened.Contains(barrel.Id) && g.Events.Any(e => e.Kind == "break") && g.Events.Any(e => e.Kind == "swing"), "the hero swings and the barrel breaks");
+        Check(g.Map.Walk(barrel.X, barrel.Y), "its cell is open now");
+        g.Enter(0, null); g.Enter(2, null);
+        Check(g.Map.Walk(barrel.X, barrel.Y) && g.Map.Props.First(p => p.Id == barrel.Id).Kind == "barrel", "and stays broken when the floor is made again");
+        // A chest opens once; a tomb is only to look at.
+        Prop chest = g.Map.Props.First(p => p.Kind == "chest");
+        g.Use(chest);
+        int drops = g.Here.Drops.Count;
+        g.Use(chest);
+        Check(g.Here.Opened.Contains(chest.Id) && g.Here.Drops.Count == drops, "a chest opens once");
+        Check(Floor.Make(3, 2).Props.Any(p => p.Kind is "urn" or "barrel") && Floor.Make(3, 4).Props.Any(p => p.Model is "bone-pile" or "candelabra" or "gibbet-cage"), "floors have things to break and things to look at");
+        Check(Floor.Make(3, 1).Props.Where(p => p.Model is "tomb" or "pillar" or "gravestone" or "bone-pile").All(p => !p.Usable), "tombs, pillars, gravestones and bones are only to look at");
+    }
+
+    [Section]
     private void Saving()
     {
         Game g = Game.New(5, Cls.Sorcerer);

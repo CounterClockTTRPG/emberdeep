@@ -40,6 +40,22 @@ public partial class SelfCheck
             Check(Kit.Has(prop, "models"), $"the {prop} model");
         foreach (string held in Data.Bases.Where(b => b.Held != null).Select(b => b.Held).Distinct())
             Check(Kit.Has("held-" + held), $"the held {held}");
+        // Heroes on the base bodies (once assetgen has made them): what is worn shows, the skin under it is hidden.
+        foreach (bool female in new[] { false, true })
+        {
+            string body = female ? "body-woman" : "body-man";
+            if (!Kit.Has(body)) continue;
+            Hero h = Hero.New(Cls.Wanderer, female);
+            Check(Data.HeroBody(h) == body, $"a {(female ? "woman" : "man")} hero stands on {body}");
+            var fig = new Figure3D(body, 1.8f);
+            AddChild(fig);
+            World3D.Dress(fig, h);
+            var outfit = World3D.Outfit(h);
+            Check(outfit.Any(p => p.slot == "torso") || !Kit.Has($"wear-{(female ? "f" : "m")}-quilted-armour"), "the quilted armour shows");
+            if (outfit.Any(p => p.slot == "torso"))
+                Check(fig.FindChildren("body_torso", "MeshInstance3D", true, false).Cast<MeshInstance3D>().All(m => !m.Visible), "and the skin under it is hidden");
+            fig.Free();
+        }
         // On the floor: weapons and shields as their models lying flat, the rest as icons with the background cut away.
         foreach (Base b in Data.Bases)
         {

@@ -1,10 +1,20 @@
 # Emberdeep models: name, assetgen asset id (scripts/assets.py copies the latest version of each).
+anvil prop-anvil-9136aa
 barrel prop-barrel-7cfca8
+bone-pile prop-bone-pile-267b08
 brazier prop-brazier-21813d
+candelabra prop-candelabra-84aec6
 chest prop-chest-61d5a5
+crate prop-crate-5b29ef
+door prop-door-6e41cb
+gibbet-cage prop-gibbet-cage-327f95
+gravestone prop-gravestone-604bea
 house prop-house-0ff7fb
 pillar prop-pillar-12a46a
+shrine prop-shrine-a1dbf7
 tomb prop-tomb-52896f
+torch-sconce prop-torch-sconce-2c99a9
 tree prop-tree-bf0deb
+urn prop-urn-8eb183
 waystone prop-waystone-b34d17
 well prop-well-9a8b2e

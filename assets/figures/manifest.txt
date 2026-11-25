@@ -25,6 +25,7 @@ body-shade body-shade-4947aa
 body-slag-golem body-slag-golem-ca3b5d
 body-smith body-smith-616eb1
 body-sorcerer body-sorcerer-9b91ce
+body-woman body-woman-09b205
 clip-aim humanoid-pistol-aim-7930a3
 clip-block humanoid-block-9a3bf5
 clip-cheer humanoid-cheer-eee9a6
@@ -56,11 +57,13 @@ held-buckler held-buckler-5d873b
 held-club held-club-0fe8ee
 held-dagger held-dagger-7af412
 held-great-axe held-great-axe-3cee7e
+held-long-bow held-long-bow-5e177d
 held-mace held-mace-8d776b
 held-shield held-shield-aa1560
 held-staff held-staff-9c8901
 held-sword held-sword-8f3034
 held-tower-shield held-tower-shield-40851c
+held-wand held-wand-52cd84
 qclip-bite quadruped-bite-09361d
 qclip-death quadruped-death-29abae
 qclip-howl quadruped-howl-c45b36

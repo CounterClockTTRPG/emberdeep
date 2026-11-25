@@ -2,6 +2,8 @@
   <PropertyGroup>
     <!-- Godot 4.7 hosts a net8.0 assembly and rolls it forward onto the installed runtime. -->
     <TargetFramework>net8.0</TargetFramework>
+    <!-- The Android export template only supports net9.0 (needs the .NET 9 SDK installed beside 8). -->
+    <TargetFramework Condition=" '$(GodotTargetPlatform)' == 'android' ">net9.0</TargetFramework>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <RootNamespace>Emberdeep</RootNamespace>
     <AssemblyName>Emberdeep</AssemblyName>

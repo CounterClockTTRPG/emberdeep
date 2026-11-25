@@ -10,8 +10,27 @@ public sealed class Prop
     public int Id;
     /// <summary>The model in assets/models (null: the view draws it, e.g. the stairs).</summary>
     public string Model;
-    /// <summary>What it is to the rules: deco, chest, waystone, down, up, stash, well, house, brazier.</summary>
+    /// <summary>
+    /// What it is to the rules. Things to use: chest and crate (opened once), barrel and urn (broken once), waystone,
+    /// down, up, stash, well. Only to look at: deco, house, brazier.
+    /// </summary>
     public string Kind = "deco";
+
+    /// <summary>Can the hero use it (it lights up under the cursor), as against a thing only to look at?</summary>
+    public bool Usable => Kind is "chest" or "crate" or "barrel" or "urn" or "waystone" or "down" or "up" or "stash" or "well";
+
+    /// <summary>Used once and then spent: opened (chest, crate) or broken (barrel, urn).</summary>
+    public bool OneUse => Kind is "chest" or "crate" or "barrel" or "urn";
+
+    /// <summary>Broken into pieces when used (the cell it stood on opens up).</summary>
+    public bool Breaks => Kind is "barrel" or "urn";
+
+    /// <summary>Its name under the cursor.</summary>
+    public string Title => Kind switch
+    {
+        "chest" => "Chest", "crate" => "Crate", "barrel" => "Barrel", "urn" => "Burial urn", "waystone" => "Waystone",
+        "down" => "The way down", "up" => "The way up", "stash" => "Your stash", "well" => "Well", _ => Model,
+    };
     public int X, Y;
     /// <summary>Its footprint in cells (a house is 5 x 4), from X, Y.</summary>
     public int W = 1, H = 1;
@@ -84,6 +103,15 @@ public sealed class Floor
         return p;
     }
 
+    /// <summary>A broken thing no longer stands in the way (its pieces lie on the floor, the view draws them).</summary>
+    public void Broken(Prop p)
+    {
+        p.Blocks = false;
+        for (int yy = p.Y; yy < p.Y + p.H; yy++)
+            for (int xx = p.X; xx < p.X + p.W; xx++)
+                if (In(xx, yy)) Blocked[yy * W + xx] = Props.Any(o => o.Blocks && xx >= o.X && yy >= o.Y && xx < o.X + o.W && yy < o.Y + o.H);
+    }
+
     private void Unblock(Prop p)
     {
         Props.Remove(p);
@@ -122,8 +150,13 @@ public sealed class Floor
         f.Add("house", "house", c - 3, f.H - 10, true, 5, Math.PI, 5, 5);
         f.Add("brazier", "brazier", 12, 20, true, 1.1);
         f.Add("brazier", "brazier", f.W - 13, 20, true, 1.1);
-        f.Add("barrel", "deco", 11, 17, true, 0.9);
-        f.Add("barrel", "deco", 11, 18, true, 0.9);
+        f.Add("barrel", "barrel", 11, 17, true, 0.9);
+        f.Add("barrel", "barrel", 11, 18, true, 0.9);
+        f.Add("crate", "crate", 12, 18, true, 0.8, 0.4);
+        f.Add("anvil", "deco", f.W - 13, 17, true, 0.9, 0.6);
+        f.Add("crate", "deco", f.W - 14, 19, true, 0.8, 0.2);
+        f.Add("gravestone", "deco", f.W - 7, f.H - 8, true, 1.1, -0.2);
+        f.Add("gravestone", "deco", f.W - 10, f.H - 6, true, 1.1, 0.3);
         f.Add("tomb", "deco", f.W - 9, f.H - 8, true, 2.2, 0.3, 2, 1);
         // Dead trees: a ring at the edge and a few in the square, never on a path.
         for (int k = 0; k < 70; k++)
@@ -276,6 +309,12 @@ public sealed class Floor
     /// <summary>Is a cell next to rock (a place for a brazier against a wall)?</summary>
     private bool ByWall(int x, int y) => !Floor_(x - 1, y) || !Floor_(x + 1, y) || !Floor_(x, y - 1) || !Floor_(x, y + 1);
 
+    /// <summary>
+    /// A turn that faces a chest's front (+Z of its model) roughly toward the camera (from +x +y), give or take: its lid
+    /// then opens away from the player and shows what is inside.
+    /// </summary>
+    private static double FacingView(Rng r) => Math.PI / 4 + (r.Float() - 0.5) * 1.2;
+
     private void Furnish(string theme, Rng r, Room start, Room far)
     {
         foreach (Room room in Rooms)
@@ -307,19 +346,47 @@ public sealed class Floor
                 Add("tomb", "deco", x, y, true, 2.2, r.Chance(0.5) ? 0 : Math.PI, 2, 1);
                 k++;
             }
-            // Barrels in the corners, now and then.
-            if (r.Chance(0.4))
+            // Things to break in the corners and along the walls: barrels, and burial urns in the graves.
+            int breakables = r.Int(0, 3);
+            for (int k = 0, tries = 0; k < breakables && tries < 20; tries++)
             {
-                int x = r.Chance(0.5) ? room.X : room.X + room.W - 1, y = r.Chance(0.5) ? room.Y : room.Y + room.H - 1;
-                if (Walk(x, y)) Add("barrel", "deco", x, y, true, 0.9, r.Float() * Math.Tau);
+                int x = room.X + r.Int(0, room.W), y = room.Y + r.Int(0, room.H);
+                if (!ByWall(x, y) || !Clear(x, y, 1, 1, 0) || Props.Any(p => Math.Abs(p.X - x) + Math.Abs(p.Y - y) < 2 && p.Kind != "barrel" && p.Kind != "urn")) continue;
+                bool urn = theme != "ember" && r.Chance(theme == "barrow" ? 0.6 : 0.4);
+                Add(urn ? "urn" : "barrel", urn ? "urn" : "barrel", x, y, true, urn ? 0.7 : 0.9, r.Float() * Math.Tau);
+                k++;
             }
-            // A chest in about one room in four, more often where the stairs are.
+            // Something to look at (never to use): bones, gravestones, candelabras, a gibbet.
+            string[] look = theme switch
+            {
+                "barrow" => new[] { "gravestone", "bone-pile", "gravestone" },
+                "catacomb" => new[] { "bone-pile", "candelabra", "gibbet-cage" },
+                _ => new[] { "candelabra", "bone-pile", "gibbet-cage" },
+            };
+            if (r.Chance(0.55))
+                for (int tries = 0; tries < 12; tries++)
+                {
+                    int x = room.X + r.Int(1, room.W - 1), y = room.Y + r.Int(1, room.H - 1);
+                    if (!Clear(x, y, 1, 1)) continue;
+                    string m = look[r.Int(0, look.Length)];
+                    Add(m, "deco", x, y, true, m switch { "gibbet-cage" => 1.8, "candelabra" => 1.7, "bone-pile" => 1.2, _ => 1.1 }, r.Float() * Math.Tau);
+                    break;
+                }
+            // A chest in about one room in four, more often where the stairs are; now and then a crate.
             if (r.Chance(room == far ? 0.8 : 0.25))
                 for (int tries = 0; tries < 15; tries++)
                 {
                     int x = room.X + r.Int(1, room.W - 1), y = room.Y + r.Int(1, room.H - 1);
                     if (!Clear(x, y, 1, 1)) continue;
-                    Add("chest", "chest", x, y, true, 0.9, r.Float() * Math.Tau);
+                    Add("chest", "chest", x, y, true, 0.9, FacingView(r));
+                    break;
+                }
+            else if (r.Chance(0.25))
+                for (int tries = 0; tries < 15; tries++)
+                {
+                    int x = room.X + r.Int(1, room.W - 1), y = room.Y + r.Int(1, room.H - 1);
+                    if (!Clear(x, y, 1, 1)) continue;
+                    Add("crate", "crate", x, y, true, 0.8, FacingView(r));
                     break;
                 }
         }
@@ -400,7 +467,7 @@ public sealed class Floor
             for (int c = 0; c < W * H; c++) if (Cells[c] == 1 && !Blocked[c] && d[c] < 0) { lost = c; break; }
             if (lost < 0) return;
             int lx = lost % W, ly = lost / W;
-            Prop nearest = Props.Where(p => p.Blocks && p.Kind is "deco" or "brazier")
+            Prop nearest = Props.Where(p => p.Blocks && p.Kind is "deco" or "brazier" or "barrel" or "urn")
                 .OrderBy(p => Math.Abs(p.X - lx) + Math.Abs(p.Y - ly)).FirstOrDefault();
             if (nearest == null) return;
             Unblock(nearest);

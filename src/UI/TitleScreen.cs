@@ -15,6 +15,7 @@ public partial class TitleScreen : Control
     public int Choosing;
     private int _selected;
     private Cls _class = Cls.Wanderer;
+    private bool _female;
     private TitleStage _stage;
     private Control _column;
     private Label _caption, _captionSub;
@@ -68,9 +69,9 @@ public partial class TitleScreen : Control
     {
         if (Choosing > 0)
         {
-            _stage.Stand(Hero.New(_class), false);
+            _stage.Stand(Hero.New(_class, _female), false);
             _caption.Text = _class switch { Cls.Wanderer => "The Wanderer", Cls.Rogue => "The Rogue", _ => "The Sorcerer" };
-            _captionSub.Text = "Level 1, about to go down";
+            _captionSub.Text = $"Level 1 {(_female ? "woman" : "man")}, about to go down";
             return;
         }
         Game g = Profile.LoadGame(_selected);
@@ -122,7 +123,7 @@ public partial class TitleScreen : Control
         {
             Button go = UITheme.Flat("Continue", () => Root.Instance.Continue(_selected), 30, UITheme.Ember, UITheme.Title);
             actions.AddChild(go);
-            actions.AddChild(UITheme.Flat("Start over", () => { Choosing = _selected; _class = sel.Hero.Class; Build(); Show(); }, 19, UITheme.Bone));
+            actions.AddChild(UITheme.Flat("Start over", () => { Choosing = _selected; _class = sel.Hero.Class; _female = sel.Hero.Female; Build(); Show(); }, 19, UITheme.Bone));
             actions.AddChild(UITheme.Flat("Clear", () => { Profile.DeleteSlot(_selected); Build(); Show(); }, 19, UITheme.Ash));
             CallDeferred(Control.MethodName.GrabFocus);
             go.CallDeferred(Control.MethodName.GrabFocus);
@@ -148,14 +149,31 @@ public partial class TitleScreen : Control
             col.AddChild(new SlotRow(null, name, Data.Blurb(c) + $"\nMight {m}, agility {a}, vigour {v}, spirit {sp}", c == _class,
                 () => { _class = cls; Build(); Show(); }, c));
         }
-        col.AddChild(new Control { CustomMinimumSize = new Vector2(0, 22) });
+        // A man or a woman: the chosen one is bone with an ember bar under it, the other ash.
+        var sex = UITheme.H(22);
+        foreach (bool f in new[] { false, true })
+        {
+            bool female = f;
+            Button b = UITheme.Flat(f ? "A woman" : "A man", () => { _female = female; Build(); Show(); }, 20, _female == f ? UITheme.Bone : UITheme.Ash);
+            if (_female == f) b.AddThemeStyleboxOverride("normal", new StyleBoxLine { Color = UITheme.Ember, Thickness = 2, Vertical = false, GrowBegin = 0, GrowEnd = 0 });
+            sex.AddChild(b);
+        }
+        col.AddChild(sex);
+        col.AddChild(new Control { CustomMinimumSize = new Vector2(0, 16) });
         var actions = UITheme.H(28);
         string who = _class switch { Cls.Wanderer => "the Wanderer", Cls.Rogue => "the Rogue", _ => "the Sorcerer" };
-        Button go = UITheme.Flat($"Go down as {who}", () => Root.Instance.NewGame(Choosing, 0, _class), 30, UITheme.Ember, UITheme.Title);
+        Button go = UITheme.Flat($"Go down as {who}", () => Root.Instance.NewGame(Choosing, 0, _class, _female), 30, UITheme.Ember, UITheme.Title);
         actions.AddChild(go);
         actions.AddChild(UITheme.Flat("Back", () => { Choosing = 0; Build(); Show(); }, 19, UITheme.Ash));
         col.AddChild(actions);
         go.CallDeferred(Control.MethodName.GrabFocus);
+    }
+
+    /// <summary>The back button: out of the class choice, else quit.</summary>
+    public void Back()
+    {
+        if (Choosing > 0) { Choosing = 0; Build(); Show(); }
+        else GetTree().Quit();
     }
 
     public override void _UnhandledKeyInput(InputEvent e)
@@ -315,11 +333,11 @@ public partial class TitleStage : Node3D
     /// <summary>Put a hero on the dais, as equipped. A ghost (an empty slot) stands dim, as a hint of who could come.</summary>
     public void Stand(Hero h, bool ghost)
     {
-        string key = $"{h.Class}|{h.Weapon?.Base}|{h.Equip[(int)Slot.Shield]?.Base}|{ghost}";
+        string key = $"{h.Class}|{h.Female}|{string.Join(",", h.Equip.Select(i => i?.Base))}|{ghost}";
         if (key == _heroKey) return;
         _heroKey = key;
         _hero?.QueueFree();
-        _hero = new Figure3D(Data.Body(h.Class), 1.8f) { Rotation = new Vector3(0, 0.38f, 0) };
+        _hero = new Figure3D(Data.HeroBody(h), h.Female ? 1.72f : 1.8f) { Rotation = new Vector3(0, 0.38f, 0) };
         AddChild(_hero);
         World3D.Dress(_hero, h);
         _hero.Play(h.Weapon == null ? "idle" : h.S.Ranged ? "aim" : "ready", 0.8f, false, "idle");

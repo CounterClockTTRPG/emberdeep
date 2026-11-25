@@ -19,7 +19,7 @@ public partial class World3D : Node3D
     private DirectionalLight3D _sun;
     private OmniLight3D _heroLight;
     private Node3D _level, _dyn;
-    private ShaderMaterial _walls;
+    private ShaderMaterial _walls, _glow;
     private StandardMaterial3D _ground;
     private int _builtDepth = -1;
     private ulong _builtSeed;
@@ -72,6 +72,7 @@ public partial class World3D : Node3D
         AddChild(_heroLight);
         _walls = new ShaderMaterial { Shader = new Shader { Code = WallShader } };
         _ground = new StandardMaterial3D { VertexColorUseAsAlbedo = true, Roughness = 0.95f };
+        _glow = new ShaderMaterial { Shader = new Shader { Code = GlowShader } };
         _dyn = new Node3D { Name = "Dynamic" };
         AddChild(_dyn);
     }
@@ -112,7 +113,7 @@ public partial class World3D : Node3D
         _last.Clear();
         _heroHidden = false;
         foreach (Node3D n in _drops.Values.Concat(_missiles.Values).Concat(_zones.Values)) n.QueueFree();
-        _drops.Clear(); _missiles.Clear(); _zones.Clear(); _props.Clear();
+        _drops.Clear(); _missiles.Clear(); _zones.Clear(); _props.Clear(); _usable.Clear(); _tweens.Clear();
         foreach (Fx fx in _fx) fx.Node.QueueFree();
         _fx.Clear();
         _flicker.Clear();
@@ -243,7 +244,132 @@ public partial class World3D : Node3D
         if (p.Kind == "brazier") Light(at + new Vector3(0, 1.4f, 0), new Color(1f, 0.55f, 0.2f), 2.2f, 7.5f, true);
         if (p.Kind == "waystone") Light(at + new Vector3(0, 2.0f, 0), new Color(0.4f, 0.6f, 1f), Game.Hero.Waystones.Contains(Game.Depth) ? 1.6f : 0.5f, 6, false);
         if (p.Kind == "down") Light(at + new Vector3(0, -0.6f, 0), new Color(1f, 0.35f, 0.1f), 1.8f, 4, true);
-        if (p.Kind == "chest" && Game.Here.Opened.Contains(p.Id)) Opened(node);
+        bool spent = p.OneUse && Game.Here.Opened.Contains(p.Id);
+        if (spent && (p.Kind is "chest" or "crate")) OpenLid(node, false);
+        if (spent && p.Breaks) Shatter(p, node, false);
+        if (p.Usable)
+        {
+            var meshes = node.FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>().ToList();
+            foreach (MeshInstance3D mi in meshes) mi.MaterialOverlay = _glow;
+            _usable[p.Id] = (p, meshes);
+        }
+    }
+
+    // ---- things to use: a glow on them, a name under the cursor, lids that open, things that break --------------
+
+    /// <summary>The usable props of the floor and their meshes (for the glow).</summary>
+    private readonly Dictionary<int, (Prop p, List<MeshInstance3D> meshes)> _usable = new();
+    /// <summary>The usable prop under the cursor (0: none), set by the screen each frame.</summary>
+    public int HoverProp;
+    private Label3D _hoverName;
+    private readonly List<Tween3D> _tweens = new();
+
+    /// <summary>A node moving from one transform to another over a time, along an arc (the pieces of a barrel, a lid).</summary>
+    private sealed class Tween3D
+    {
+        public Node3D Node;
+        public Transform3D From, To;
+        public float T, Duration, Arc, Spin;
+        public Vector3 SpinAxis;
+    }
+
+    /// <summary>
+    /// The glow that marks a thing as usable: a soft ember rim that breathes, bright under the cursor, gone once it is
+    /// spent (opened, broken). Things only to look at never glow.
+    /// </summary>
+    private void Glow()
+    {
+        Prop hover = null;
+        foreach (var (id, (p, meshes)) in _usable)
+        {
+            bool spent = p.OneUse && Game.Here.Opened.Contains(p.Id);
+            bool near = Game.Dist(p.X + p.W / 2.0, p.Y + p.H / 2.0, Game.Me.X, Game.Me.Y) < 24;
+            float g = spent || !near ? 0 : id == HoverProp ? 1.7f : 0.5f + 0.2f * Mathf.Sin((float)_clock * 2.2f + id);
+            if (id == HoverProp && !spent) hover = p;
+            foreach (MeshInstance3D mi in meshes) if (IsInstanceValid(mi)) mi.SetInstanceShaderParameter("glow", g);
+        }
+        if (_hoverName == null)
+        {
+            _hoverName = new Label3D
+            {
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, FontSize = 48, PixelSize = 0.006f,
+                OutlineSize = 10, Modulate = UITheme.Ember.Lightened(0.3f), Font = UITheme.Title,
+            };
+            _dyn.AddChild(_hoverName);
+        }
+        _hoverName.Visible = hover != null;
+        if (hover != null)
+        {
+            _hoverName.Text = hover.Title;
+            float h = hover.Kind is "down" ? 0.6f : hover.Kind is "up" ? 1.4f : (float)Math.Min(hover.Size, 2.4) + 0.45f;
+            _hoverName.Position = new Vector3(hover.X + hover.W / 2f, h, hover.Y + hover.H / 2f);
+        }
+    }
+
+    private void Tweens(float dt)
+    {
+        foreach (Tween3D tw in _tweens.ToList())
+        {
+            tw.T += dt;
+            float t = Mathf.Clamp(tw.T / tw.Duration, 0, 1);
+            if (!IsInstanceValid(tw.Node)) { _tweens.Remove(tw); continue; }
+            Vector3 pos = tw.From.Origin.Lerp(tw.To.Origin, t) + new Vector3(0, tw.Arc * 4 * t * (1 - t), 0);
+            Basis rot = tw.From.Basis.Slerp(tw.To.Basis, t);
+            if (tw.Spin != 0) rot = new Basis(tw.SpinAxis, tw.Spin * (1 - t) * t * 4) * rot;
+            tw.Node.Transform = new Transform3D(rot, pos);
+            if (t >= 1) { tw.Node.Transform = tw.To; _tweens.Remove(tw); }
+        }
+    }
+
+    /// <summary>A chest's or crate's lid swings up on its hinge (or is simply open, when the floor is built again).</summary>
+    private void OpenLid(Node3D prop, bool animate)
+    {
+        if (Kit.FindNamed(prop, "lid") is not Node3D lid) return;
+        Transform3D shut = lid.Transform;
+        var open = new Transform3D(new Basis(Vector3.Right, -1.85f) * shut.Basis, shut.Origin);
+        if (!animate) { lid.Transform = open; return; }
+        _tweens.Add(new Tween3D { Node = lid, From = shut, To = open, Duration = 0.55f });
+    }
+
+    /// <summary>
+    /// A barrel or an urn bursts: the model goes, and its pieces (staves and hoops, or glazed shards) fly out and come
+    /// to rest around where it stood, where they stay. The resting places come from the prop's id, so a floor built
+    /// again shows the same wreck.
+    /// </summary>
+    private void Shatter(Prop p, Node3D node, bool animate)
+    {
+        node.Visible = false;
+        var wreck = new Node3D { Name = $"Wreck{p.Id}", Position = node.Position };
+        _level.AddChild(wreck);
+        bool urn = p.Kind == "urn";
+        float size = (float)p.Size;
+        var wood = new StandardMaterial3D { AlbedoColor = urn ? new Color(0.5f, 0.2f, 0.12f) : new Color(0.36f, 0.24f, 0.14f), Roughness = 0.9f };
+        var band = new StandardMaterial3D { AlbedoColor = urn ? new Color(0.78f, 0.72f, 0.58f) : new Color(0.24f, 0.22f, 0.21f), Roughness = 0.6f, Metallic = urn ? 0 : 0.6f };
+        int n = urn ? 11 : 12;
+        for (int k = 0; k < n; k++)
+        {
+            float h1 = Hash(p.Id, k, 1), h2 = Hash(p.Id, k, 2), h3 = Hash(p.Id, k, 3);
+            Mesh mesh;
+            Material mat = wood;
+            if (!urn && k >= 10) { mesh = new TorusMesh { InnerRadius = size * 0.3f, OuterRadius = size * 0.34f, Rings = 16 }; mat = band; }
+            else if (urn) { mesh = new BoxMesh { Size = new Vector3(0.1f + 0.12f * h1, 0.03f, 0.08f + 0.12f * h2) * size / 0.7f }; if (k % 4 == 0) mat = band; }
+            else mesh = new BoxMesh { Size = new Vector3(0.09f, 0.025f, size * 0.62f) };
+            var piece = new MeshInstance3D { Mesh = mesh, MaterialOverride = mat };
+            wreck.AddChild(piece);
+            float ang = (k + h1 * 0.8f) / n * Mathf.Tau, dist = 0.25f + 0.65f * h2 * size;
+            float lieY = mesh is TorusMesh ? 0.03f : 0.02f;
+            var rest = new Transform3D(new Basis(Vector3.Up, h3 * Mathf.Tau), new Vector3(Mathf.Cos(ang) * dist, lieY, Mathf.Sin(ang) * dist));
+            if (!animate) { piece.Transform = rest; continue; }
+            var start = new Transform3D(new Basis(Vector3.Up, ang) * new Basis(Vector3.Right, 1.4f), new Vector3(Mathf.Cos(ang) * 0.15f, size * (0.25f + 0.5f * h3), Mathf.Sin(ang) * 0.15f));
+            piece.Transform = start;
+            _tweens.Add(new Tween3D { Node = piece, From = start, To = rest, Duration = 0.45f + 0.25f * h1, Arc = 0.5f + 0.6f * h2, Spin = 6 + 6 * h3, SpinAxis = new Vector3(h1 - 0.5f, 0.3f, h2 - 0.5f).Normalized() });
+        }
+        if (animate)
+        {
+            // A puff of dust (or a flash of old ash from an urn).
+            var puff = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.45f, 0.4f, 0.35f, 0.5f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha }, Position = node.Position + new Vector3(0, 0.4f, 0) };
+            AddFx(puff, 0.6f, (fx, t) => { fx.Node.Scale = Vector3.One * (0.5f + t * 1.4f); Fade(fx.Node, 0.5f * (1 - t)); });
+        }
     }
 
     private void Light(Vector3 at, Color c, float energy, float range, bool flicker)
@@ -251,13 +377,6 @@ public partial class World3D : Node3D
         var l = new OmniLight3D { LightColor = c, LightEnergy = energy, OmniRange = range, OmniAttenuation = 1.3f, Position = at };
         _level.AddChild(l);
         if (flicker) _flicker.Add((l, energy, (float)(at.X * 1.7 + at.Z)));
-    }
-
-    private static void Opened(Node3D chest)
-    {
-        // An opened chest: dimmer, and its lid knocked askew.
-        chest.Scale = new Vector3(1, 0.85f, 1);
-        chest.RotateY(0.25f);
     }
 
     /// <summary>Stairs: down, a pit stepping into ember light; up, three steps against the wall.</summary>
@@ -326,6 +445,8 @@ public partial class World3D : Node3D
         Zones();
         Portal();
         Effects((float)dt);
+        Tweens((float)dt);
+        Glow();
         foreach (var (l, e, ph) in _flicker) l.LightEnergy = e * (0.85f + 0.15f * Mathf.Sin((float)_clock * 9 + ph) * Mathf.Sin((float)_clock * 5.3f + ph * 2));
         Vector3 hero = At(Game.Me.X, Game.Me.Y);
         _camAt = _camAt == Vector3.Zero || _camAt.DistanceTo(hero) > 12 ? hero : _camAt.Lerp(hero, Mathf.Min(1, (float)dt * 8));
@@ -367,7 +488,7 @@ public partial class World3D : Node3D
     private Figure3D MakeFigure(Actor a)
     {
         string body; float h;
-        if (a.Hero) { body = Data.Body(Game.Hero.Class); h = 1.8f; }
+        if (a.Hero) { body = Data.HeroBody(Game.Hero); h = Game.Hero.Female ? 1.72f : 1.8f; }
         else if (a.Npc) { body = "body-" + a.Def; h = a.Def == "smith" ? 1.85f : 1.7f; }
         else
         {
@@ -437,6 +558,27 @@ public partial class World3D : Node3D
     {
         string held = h.Weapon?.B.Held;
         fig.Hold(held, null, h.Equip[(int)Slot.Shield] != null ? "shield" : null);
+        if (fig.BodyName is "body-man" or "body-woman") fig.Wear(Outfit(h));
+    }
+
+    /// <summary>
+    /// The pieces a hero on a base body wears (only those that have been made): the armour worn, by its base; with no
+    /// helm the rogue's hood or the hair; trousers, or the sorcerer's robe; each class's cloak, cape or mantle.
+    /// </summary>
+    public static List<(string piece, string slot)> Outfit(Hero h)
+    {
+        string tag = h.Female ? "f" : "m";
+        var list = new List<(string, string)>();
+        void Add(string piece, string slot) { if (piece != null && Kit.Has($"wear-{tag}-{piece}")) list.Add(($"wear-{tag}-{piece}", slot)); }
+        Add(h.Equip[(int)Slot.Body]?.Base, "torso");
+        string helm = h.Equip[(int)Slot.Head]?.Base;
+        Add(helm ?? (h.Class == Cls.Rogue ? "rogue-hood" : "hair"), "head");
+        if (helm == null && h.Class == Cls.Rogue && !Kit.Has($"wear-{tag}-rogue-hood")) Add("hair", "head");
+        Add(h.Equip[(int)Slot.Hands]?.Base, "arms");
+        Add(h.Equip[(int)Slot.Feet]?.Base, "feet");
+        Add(h.Class == Cls.Sorcerer ? "sorcerer-robe" : "trousers", "legs");
+        Add(h.Class switch { Cls.Wanderer => "wanderer-cloak", Cls.Rogue => "rogue-cape", _ => "sorcerer-mantle" }, "back");
+        return list;
     }
 
     private void Animate(Actor a, Figure3D fig)
@@ -607,7 +749,20 @@ public partial class World3D : Node3D
     private void Missiles(float dt)
     {
         var live = new HashSet<int>(Game.Here.Missiles.Select(m => m.Id));
-        foreach (int id in _missiles.Keys.Where(id => !live.Contains(id)).ToList()) { _missiles[id].QueueFree(); _missiles.Remove(id); }
+        foreach (int id in _missiles.Keys.Where(id => !live.Contains(id)).ToList())
+        {
+            // Its trail stays to fade out where it ended.
+            if (_missiles[id].GetNodeOrNull<CpuParticles3D>("Trail") is CpuParticles3D trail)
+            {
+                trail.Emitting = false;
+                Transform3D where = trail.GlobalTransform;
+                trail.GetParent().RemoveChild(trail);
+                AddFx(trail, (float)trail.Lifetime + 0.1f, null);
+                trail.GlobalTransform = where;
+            }
+            _missiles[id].QueueFree();
+            _missiles.Remove(id);
+        }
         foreach (Missile m in Game.Here.Missiles)
         {
             if (!_missiles.TryGetValue(m.Id, out Node3D node))
@@ -618,8 +773,16 @@ public partial class World3D : Node3D
                 else
                 {
                     Color c = ElemColour(m.Elem);
-                    node.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.2f, Height = 0.4f }, MaterialOverride = Glow(c, 3) });
-                    if (m.Kind == "firebolt" || m.Kind == "ember") node.AddChild(new OmniLight3D { LightColor = c, LightEnergy = 1.5f, OmniRange = 3.5f });
+                    bool fire = m.Kind is "firebolt" or "ember";
+                    node.AddChild(new MeshInstance3D { Mesh = new SphereMesh { Radius = fire ? 0.16f : 0.13f, Height = fire ? 0.32f : 0.26f }, MaterialOverride = Glow(fire ? new Color(1f, 0.85f, 0.5f) : c, 4) });
+                    // A halo round the core, and a trail behind it: flames for fire, a frosty mist for cold.
+                    node.AddChild(new Sprite3D { Texture = Vfx.Soft, PixelSize = 0.012f, Modulate = c * 1.4f, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, Shaded = false, Transparent = true, AlphaCut = SpriteBase3D.AlphaCutMode.Disabled });
+                    CpuParticles3D trail = fire
+                        ? Vfx.Trail(new Color(1f, 0.8f, 0.35f) * 1.8f, new Color(0.8f, 0.2f, 0.05f), 0.32f, m.Kind == "ember" ? 30 : 50, 0.4f)
+                        : Vfx.Trail(new Color(0.8f, 0.95f, 1f) * 1.5f, new Color(0.3f, 0.5f, 0.9f), 0.22f, 35, 0.45f);
+                    trail.Name = "Trail";
+                    node.AddChild(trail);
+                    if (fire && m.Kind == "firebolt") node.AddChild(new OmniLight3D { LightColor = c, LightEnergy = 1.6f, OmniRange = 3.5f });
                 }
                 _dyn.AddChild(node);
                 _missiles[m.Id] = node;
@@ -640,21 +803,37 @@ public partial class World3D : Node3D
                 node = new Node3D { Position = At(z.X, z.Y) };
                 if (z.Kind == "meteor")
                 {
-                    var rock = new MeshInstance3D { Name = "Rock", Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f }, MaterialOverride = Glow(new Color(1f, 0.4f, 0.1f), 3) };
+                    var rock = new MeshInstance3D { Name = "Rock", Mesh = new SphereMesh { Radius = 0.6f, Height = 1.2f, RadialSegments = 7, Rings = 4 }, MaterialOverride = Glow(new Color(1f, 0.4f, 0.1f), 3) };
                     node.AddChild(rock);
+                    rock.AddChild(Vfx.Trail(new Color(1f, 0.8f, 0.4f) * 2f, new Color(0.5f, 0.12f, 0.04f), 1.1f, 90, 0.6f));
                     rock.AddChild(new OmniLight3D { LightColor = new Color(1f, 0.5f, 0.2f), LightEnergy = 3, OmniRange = 8 });
                     var mark = new MeshInstance3D { Mesh = new TorusMesh { InnerRadius = (float)z.R - 0.15f, OuterRadius = (float)z.R }, MaterialOverride = Glow(new Color(1f, 0.3f, 0.1f), 1.5f), Position = new Vector3(0, 0.05f, 0) };
                     node.AddChild(mark);
                 }
                 else if (z.Kind == "burn")
                 {
-                    node.AddChild(new MeshInstance3D { Name = "Disc", Mesh = new CylinderMesh { TopRadius = (float)z.R, BottomRadius = (float)z.R, Height = 0.05f }, MaterialOverride = Glow(new Color(0.9f, 0.3f, 0.05f, 1), 1.2f), Position = new Vector3(0, 0.04f, 0), Visible = false });
+                    // A soft glowing patch (brightest in the middle) for the flames to rise from.
+                    MeshInstance3D patch = Vfx.Mark(new Color(1f, 0.35f, 0.08f, 0.7f), (float)z.R * 1.15f);
+                    ((StandardMaterial3D)patch.MaterialOverride).BlendMode = BaseMaterial3D.BlendModeEnum.Add;
+                    patch.Name = "Disc";
+                    patch.Position = new Vector3(0, 0.03f, 0);
+                    patch.Visible = false;
+                    node.AddChild(patch);
+                    CpuParticles3D flames = Vfx.Flames((float)z.R);
+                    flames.Name = "Flames";
+                    flames.Emitting = false;
+                    node.AddChild(flames);
                 }
                 _dyn.AddChild(node);
                 _zones[z.Id] = node;
             }
             if (z.Kind == "meteor" && node.GetNodeOrNull<Node3D>("Rock") is Node3D r) r.Position = new Vector3(-(float)z.Delay * 4, (float)z.Delay * 14 + 0.6f, -(float)z.Delay * 4);
-            if (z.Kind == "burn" && node.GetNodeOrNull<Node3D>("Disc") is Node3D disc) { disc.Visible = z.Delay <= 0; disc.Scale = Vector3.One * (0.9f + 0.1f * Mathf.Sin((float)_clock * 10)); }
+            if (z.Kind == "burn" && node.GetNodeOrNull<Node3D>("Disc") is Node3D disc)
+            {
+                disc.Visible = z.Delay <= 0;
+                disc.Scale = Vector3.One * (0.9f + 0.1f * Mathf.Sin((float)_clock * 10));
+                if (node.GetNodeOrNull<CpuParticles3D>("Flames") is CpuParticles3D fl) fl.Emitting = z.Delay <= 0 && z.Left > 0.3;
+            }
         }
     }
 
@@ -715,10 +894,55 @@ public partial class World3D : Node3D
         Vector3 at = At(e.X, e.Y);
         switch (e.Kind)
         {
-            case "nova": Ring(at, e.V, ElemColour(Elem.Cold), 0.45f); break;
-            case "warcry": Ring(at, 5, new Color(1f, 0.8f, 0.35f), 0.4f, 1.2f); break;
-            case "quake": Ring(at, e.V, new Color(0.7f, 0.5f, 0.3f), 0.6f, 0.1f); Ring(at, e.V * 0.6f, new Color(0.9f, 0.6f, 0.3f), 0.45f, 0.1f); _shake = 1.2f; break;
-            case "arc": Ring(At(Game.Me.X, Game.Me.Y), 1.6f, new Color(0.9f, 0.9f, 1f), 0.18f, 1f); break;
+            case "nova":
+                Ring(at, e.V, ElemColour(Elem.Cold), 0.45f);
+                Vfx.Ring(_dyn, at + new Vector3(0, 0.4f, 0), new Color(0.85f, 0.97f, 1f) * 1.8f, new Color(0.35f, 0.6f, 1f), 90, e.V * 2.2f, 0.28f, 0.55f, true, Vfx.Shard);
+                Vfx.Ring(_dyn, at + new Vector3(0, 0.15f, 0), new Color(0.7f, 0.85f, 1f, 0.5f), new Color(0.5f, 0.6f, 0.8f), 40, e.V * 1.4f, 0.9f, 0.9f, false);
+                Flash(at + new Vector3(0, 1, 0), ElemColour(Elem.Cold), 4, e.V * 1.5f, 0.3f);
+                break;
+            case "warcry":
+                for (int k = 0; k < 3; k++) Ring(at, 5 - k, new Color(1f, 0.8f, 0.35f), 0.35f + 0.12f * k, 0.6f + 0.5f * k);
+                Vfx.Ring(_dyn, at + new Vector3(0, 0.1f, 0), new Color(0.6f, 0.5f, 0.4f, 0.6f), new Color(0.4f, 0.35f, 0.3f), 40, 6, 0.8f, 0.7f, false);
+                Vfx.Burst(_dyn, at + new Vector3(0, 1.6f, 0), new Color(1f, 0.85f, 0.4f) * 1.6f, new Color(1f, 0.5f, 0.1f), 30, 2, 4, 0.18f, 0.5f, Vector3.Zero);
+                break;
+            case "quake":
+                Ring(at, e.V, new Color(0.7f, 0.5f, 0.3f), 0.6f, 0.1f);
+                Ring(at, e.V * 0.6f, new Color(0.9f, 0.6f, 0.3f), 0.45f, 0.1f);
+                Vfx.Ring(_dyn, at + new Vector3(0, 0.2f, 0), new Color(0.55f, 0.45f, 0.35f, 0.7f), new Color(0.35f, 0.3f, 0.25f), 70, e.V * 1.6f, 1.1f, 1.1f, false);
+                Vfx.Burst(_dyn, at, new Color(0.45f, 0.38f, 0.32f), new Color(0.3f, 0.25f, 0.2f), 40, 3, 7, 0.22f, 1.1f, new Vector3(0, -14, 0), 35, Vector3.Up, false, Vfx.Shard, e.V * 0.6f, 0.9f);
+                Cracks(at, e.V);
+                _shake = 1.2f;
+                break;
+            case "arc":
+                Ring(At(Game.Me.X, Game.Me.Y), 1.6f, new Color(0.9f, 0.9f, 1f), 0.18f, 1f);
+                Vfx.Ring(_dyn, At(Game.Me.X, Game.Me.Y, 1f), new Color(1f, 1f, 1f) * 1.4f, new Color(0.6f, 0.7f, 1f), 30, 5, 0.12f, 0.25f, true, Vfx.Shard);
+                break;
+            case "cast":
+            {
+                // A glow gathering at the hands as a spell is cast.
+                Actor caster = Game.Find(e.A);
+                if (caster == null) break;
+                Color c = e.Text switch { "nova" => ElemColour(Elem.Cold), "chain" => ElemColour(Elem.Light), "shield" => new Color(0.4f, 0.6f, 1f), "warcry" => new Color(1f, 0.8f, 0.35f), "quake" => new Color(0.8f, 0.6f, 0.4f), "volley" => ElemColour(Elem.Fire), _ => caster.M?.Elem is Elem m ? ElemColour(m) : ElemColour(Elem.Fire) };
+                Vector3 hands = At(caster.X + Math.Sin(caster.Facing) * 0.45, caster.Y + Math.Cos(caster.Facing) * 0.45, caster.Hero ? 1.3f : (float)(caster.M?.Height ?? 1.7) * 0.7f);
+                Vfx.Burst(_dyn, hands, c * 1.8f, c, 18, 0.2f, 0.8f, 0.25f, 0.35f, new Vector3(0, 0.8f, 0), 180, null, true, null, 0.25f);
+                break;
+            }
+            case "hit":
+            {
+                // Sparks where a blow lands: white for steel, the element's colour for the rest, more for a critical.
+                Actor struck = Game.Find(e.A);
+                float hh = struck?.M != null ? (float)struck.M.Height * 0.6f : 1.1f;
+                Color c = e.E == Elem.Phys ? new Color(1f, 0.9f, 0.7f) : ElemColour(e.E);
+                Vfx.Burst(_dyn, at + new Vector3(0, hh, 0), c * 1.6f, c * 0.6f, e.Crit ? 22 : 9, 1.5f, e.Crit ? 5 : 3.5f, e.Crit ? 0.14f : 0.1f, 0.3f, new Vector3(0, -6, 0), 70, Vector3.Up, true, Vfx.Shard);
+                break;
+            }
+            case "shield":
+                Vfx.Burst(_dyn, At(Game.Me.X, Game.Me.Y, 1f), new Color(0.6f, 0.8f, 1f) * 1.8f, new Color(0.3f, 0.5f, 1f), 50, 1, 2.5f, 0.2f, 0.8f, new Vector3(0, 0.5f, 0), 180, null, true, Vfx.Shard, 0.9f);
+                break;
+            case "die":
+                // A wisp of ash leaves the body.
+                Vfx.Burst(_dyn, at + new Vector3(0, 0.8f, 0), new Color(0.6f, 0.55f, 0.5f, 0.6f), new Color(0.2f, 0.18f, 0.16f), 14, 0.3f, 1, 0.6f, 1.2f, new Vector3(0, 0.6f, 0), 60, null, false, null, 0.4f, 1.6f);
+                break;
             case "blast":
             {
                 Color c = ElemColour(e.E);
@@ -727,6 +951,16 @@ public partial class World3D : Node3D
                 ball.AddChild(flash);
                 float r = Math.Max(0.6f, e.V);
                 AddFx(ball, 0.4f, (fx, t) => { fx.Node.Scale = Vector3.One * (0.2f + r * t); Fade(fx.Node, 1 - t); flash.LightEnergy = 4 * (1 - t); });
+                // Fire and sparks thrown out, smoke rising after, and for a big one a scorch left on the floor.
+                Vfx.Burst(_dyn, at + new Vector3(0, 0.4f, 0), new Color(1f, 0.9f, 0.6f) * 2f, c, 20 + 12 * e.V, 1.5f, 2.5f + 2 * r, 0.5f + 0.15f * r, 0.5f, new Vector3(0, 1.5f, 0), 180, null, true, null, 0.2f, 0.4f);
+                Vfx.Burst(_dyn, at + new Vector3(0, 0.3f, 0), c * 1.8f, c, 12 + 8 * e.V, 3, 6 + 2 * r, 0.1f, 0.6f, new Vector3(0, -9, 0), 60, Vector3.Up, true, Vfx.Shard);
+                if (e.V >= 2)
+                {
+                    Vfx.Burst(_dyn, at + new Vector3(0, 0.6f, 0), new Color(0.3f, 0.27f, 0.25f, 0.55f), new Color(0.15f, 0.13f, 0.12f), 16, 0.4f, 1.2f, 1.0f + 0.2f * r, 1.6f, new Vector3(0, 0.8f, 0), 50, null, false, null, r * 0.4f, 1.8f);
+                    MeshInstance3D scorch = Vfx.Mark(new Color(0.05f, 0.03f, 0.02f, 0.8f), r * 0.9f);
+                    scorch.Position = at + new Vector3(0, 0.015f, 0);
+                    AddFx(scorch, 6, (fx, t) => Fade(fx.Node, 0.8f * (1 - t * t)));
+                }
                 if (e.V >= 3) _shake = Math.Max(_shake, 0.7f);
                 break;
             }
@@ -740,13 +974,23 @@ public partial class World3D : Node3D
                 {
                     Vector3 p = a.Lerp(b, k / 6f) + (k < 6 ? new Vector3((float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f) * 0.6f : Vector3.Zero);
                     float len = prev.DistanceTo(p);
-                    var seg = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.07f, 0.07f, len) }, MaterialOverride = Glow(ElemColour(Elem.Light), 4) };
+                    var seg = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.09f, 0.09f, len) }, MaterialOverride = Glow(new Color(0.85f, 0.9f, 1f), 5) };
+                    // A fork off the bolt now and then, and a halo along it.
+                    if (k < 6 && rng.NextDouble() < 0.5)
+                    {
+                        var fork = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.04f, 0.04f, 0.6f) }, MaterialOverride = Glow(ElemColour(Elem.Light), 4) };
+                        node.AddChild(fork);
+                        Vector3 tip = p + new Vector3((float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() * 0.6f - 0.3f, (float)rng.NextDouble() - 0.5f).Normalized() * 0.6f;
+                        fork.Position = (p + tip) / 2;
+                        fork.LookAtFromPosition(fork.Position, tip, Vector3.Up);
+                    }
                     node.AddChild(seg);
                     seg.Position = (prev + p) / 2;
                     if (len > 0.01f) seg.LookAtFromPosition(seg.Position, p, Vector3.Up);
                     prev = p;
                 }
-                node.AddChild(new OmniLight3D { LightColor = ElemColour(Elem.Light), LightEnergy = 3, OmniRange = 5, Position = b });
+                node.AddChild(new OmniLight3D { LightColor = ElemColour(Elem.Light), LightEnergy = 4, OmniRange = 6, Position = b });
+                Vfx.Burst(_dyn, b, new Color(0.9f, 0.95f, 1f) * 2f, ElemColour(Elem.Light), 18, 2, 5, 0.12f, 0.35f, new Vector3(0, -5, 0), 180, null, true, Vfx.Shard);
                 AddFx(node, 0.2f, (fx, t) => fx.Node.Visible = ((int)(t * 8)) % 2 == 0 || t < 0.3f);
                 break;
             }
@@ -754,6 +998,7 @@ public partial class World3D : Node3D
             {
                 foreach (Vector3 p in new[] { at, At(e.X2, e.Y2) })
                 {
+                    Vfx.Burst(_dyn, p + new Vector3(0, 0.9f, 0), new Color(0.35f, 0.2f, 0.5f, 0.7f), new Color(0.1f, 0.05f, 0.15f), 26, 0.4f, 1.6f, 0.7f, 0.9f, new Vector3(0, 0.6f, 0), 180, null, false, null, 0.5f, 1.8f);
                     var puff = new MeshInstance3D { Mesh = new SphereMesh { Radius = 0.7f, Height = 1.4f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.25f, 0.15f, 0.35f, 0.6f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha }, Position = p + new Vector3(0, 0.9f, 0) };
                     AddFx(puff, 0.6f, (fx, t) => { fx.Node.Scale = Vector3.One * (0.6f + t); Fade(fx.Node, 0.6f * (1 - t)); });
                 }
@@ -769,6 +1014,7 @@ public partial class World3D : Node3D
                     var arrow = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.05f, 0.75f, 0.05f) }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.55f, 0.42f, 0.28f) } };
                     float delay = (float)rng.NextDouble() * 0.15f;
                     AddFx(arrow, 0.35f, (fx, t) => fx.Node.Position = p + new Vector3(0, Mathf.Max(0.3f, 8 * (1 - t) - delay * 20), 0));
+                    if (k % 2 == 0) Vfx.Burst(_dyn, p + new Vector3(0, 0.1f, 0), new Color(0.5f, 0.45f, 0.4f, 0.6f), new Color(0.3f, 0.28f, 0.25f), 6, 0.5f, 1.5f, 0.35f, 0.5f, new Vector3(0, -2, 0), 60, null, false);
                 }
                 break;
             }
@@ -776,13 +1022,17 @@ public partial class World3D : Node3D
             {
                 var col = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.9f, BottomRadius = 0.9f, Height = 5 }, MaterialOverride = Glow(new Color(1f, 0.8f, 0.35f, 0.5f), 2), Position = At(Game.Me.X, Game.Me.Y, 2.5f) };
                 AddFx(col, 1.2f, (fx, t) => { fx.Node.Position = At(Game.Me.X, Game.Me.Y, 2.5f); fx.Node.Scale = new Vector3(1 - t * 0.5f, 1, 1 - t * 0.5f); Fade(fx.Node, 0.5f * (1 - t)); });
+                Vfx.Burst(_dyn, At(Game.Me.X, Game.Me.Y, 0.3f), new Color(1f, 0.9f, 0.5f) * 2f, new Color(1f, 0.6f, 0.2f), 60, 1.5f, 3.5f, 0.15f, 1.4f, new Vector3(0, 0.5f, 0), 20, Vector3.Up, true, Vfx.Shard, 0.8f);
                 break;
             }
             case "waystone" or "portal":
                 Ring(e.Kind == "portal" ? at : At(Game.Me.X, Game.Me.Y), 3, new Color(0.4f, 0.6f, 1f), 0.6f, 0.2f);
                 break;
             case "chest":
-                if (_props.TryGetValue(e.A, out Node3D chest)) Opened(chest);
+                if (_props.TryGetValue(e.A, out Node3D chest)) OpenLid(chest, true);
+                break;
+            case "break":
+                if (_props.TryGetValue(e.A, out Node3D thing) && Game.Map.Props.FirstOrDefault(x => x.Id == e.A) is Prop bp) Shatter(bp, thing, true);
                 break;
             case "drop":
                 _falling[e.A] = _clock;
@@ -792,6 +1042,38 @@ public partial class World3D : Node3D
                 break;
         }
         if (e.Kind is "hit" or "hurt" or "miss" or "block" or "dodge") Number(e);
+    }
+
+    /// <summary>A light that flashes up and dies away.</summary>
+    private void Flash(Vector3 at, Color c, float energy, float range, float life)
+    {
+        var l = new OmniLight3D { LightColor = c, LightEnergy = energy, OmniRange = range, Position = at };
+        AddFx(l, life, (fx, t) => ((OmniLight3D)fx.Node).LightEnergy = energy * (1 - t));
+    }
+
+    /// <summary>Cracks running out across the floor from a point, glowing a moment, then fading.</summary>
+    private void Cracks(Vector3 at, float radius)
+    {
+        var rng = new Random((int)(_clock * 1000));
+        var node = new Node3D { Position = at + new Vector3(0, 0.02f, 0) };
+        var mat = new StandardMaterial3D { ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, AlbedoColor = new Color(0.04f, 0.03f, 0.02f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha, EmissionEnabled = true, Emission = new Color(1f, 0.4f, 0.1f), EmissionEnergyMultiplier = 1.5f };
+        for (int k = 0; k < 9; k++)
+        {
+            float ang = (k + (float)rng.NextDouble() * 0.6f) / 9 * Mathf.Tau;
+            Vector3 from = Vector3.Zero;
+            float len = radius * (0.5f + 0.5f * (float)rng.NextDouble());
+            for (int s = 0; s < 4; s++)
+            {
+                ang += ((float)rng.NextDouble() - 0.5f) * 0.7f;
+                Vector3 to = from + new Vector3(Mathf.Cos(ang), 0, Mathf.Sin(ang)) * (len / 4);
+                var seg = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.09f - s * 0.018f, 0.01f, from.DistanceTo(to)) }, MaterialOverride = mat };
+                node.AddChild(seg);
+                seg.Position = (from + to) / 2;
+                seg.LookAtFromPosition(seg.Position, to, Vector3.Up);
+                from = to;
+            }
+        }
+        AddFx(node, 5, (fx, t) => { mat.EmissionEnergyMultiplier = Math.Max(0, 1.5f - t * 6); mat.AlbedoColor = new Color(0.04f, 0.03f, 0.02f, 1 - t * t); });
     }
 
     /// <summary>A number rising from a struck figure (damage in white, a critical in gold, the hero's wounds in red).</summary>
@@ -873,12 +1155,22 @@ public partial class World3D : Node3D
         if (Game.Depth == 0 && Game.PortalDepth > 0 && Game.Dist(x, y, Game.PortalSpot.x, Game.PortalSpot.y) < 1.1) return -2;
         foreach (Prop p in Game.Map.Props)
         {
-            if (p.Kind is "deco" or "house" or "brazier") continue;
-            if (p.Kind == "chest" && Game.Here.Opened.Contains(p.Id)) continue;
+            if (!p.Usable || p.OneUse && Game.Here.Opened.Contains(p.Id)) continue;
             if (x >= p.X - 0.4 && y >= p.Y - 0.4 && x < p.X + p.W + 0.4 && y < p.Y + p.H + 0.4) return p.Id;
         }
         return 0;
     }
+
+    /// <summary>An ember rim added over a usable thing's own look; its strength is per mesh (instance uniform).</summary>
+    private const string GlowShader = @"
+shader_type spatial;
+render_mode unshaded, blend_add, depth_draw_never, cull_back;
+instance uniform float glow = 0.0;
+uniform vec3 tint : source_color = vec3(1.0, 0.55, 0.2);
+void fragment() {
+    float rim = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 2.0);
+    ALBEDO = tint * (rim * 0.9 + 0.06) * glow;
+}";
 
     private const string WallShader = @"
 shader_type spatial;

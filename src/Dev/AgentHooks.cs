@@ -43,11 +43,11 @@ public static class AgentHooks
         };
         agent.OnQuit = () => { if (root.Game != null) Profile.SaveGame(root.Game); };
 
-        agent.Command("new", "new [wanderer|rogue|sorcerer] [SEED]   a new hero in the agent's slot", async a =>
+        agent.Command("new", "new [wanderer|rogue|sorcerer] [SEED] [man|woman]   a new hero in the agent's slot", async a =>
         {
             Cls c = a.Length > 1 && Enum.TryParse(a[1], true, out Cls cc) ? cc : Cls.Wanderer;
             ulong seed = a.Length > 2 ? (ulong)AgentServer.Int(a[2]) : 42;
-            root.NewGame(1, seed, c);
+            root.NewGame(1, seed, c, a.Length > 3 && a[3] == "woman");
             await agent.Frames(3);
             return $"new {c}, seed {root.Game.Seed}";
         });
@@ -92,13 +92,13 @@ public static class AgentHooks
             await agent.Frames(1);
             return $"going for {drop.Item.Title}";
         });
-        agent.Command("use", "use ID|down|up|waystone|chest|stash|portal   walk to a thing and use it", async a =>
+        agent.Command("use", "use ID|down|up|waystone|chest|crate|barrel|urn|stash|well|portal   walk to a thing and use it", async a =>
         {
             Game g = G();
             int id;
             if (a[1] == "portal") id = -2;
             else if (int.TryParse(a[1], out int n)) id = n;
-            else id = g.Map.Props.Where(p => p.Kind == a[1] && !(p.Kind == "chest" && g.Here.Opened.Contains(p.Id)))
+            else id = g.Map.Props.Where(p => p.Kind == a[1] && !(p.OneUse && g.Here.Opened.Contains(p.Id)))
                 .OrderBy(p => Game.Dist(p.X, p.Y, g.Me.X, g.Me.Y)).FirstOrDefault()?.Id ?? throw new Exception($"no {a[1]} here");
             g.OrderUse(id);
             await agent.Frames(1);
@@ -287,7 +287,7 @@ public static class AgentHooks
         var drops = g.Here.Drops.Where(d => Game.Dist(d.X, d.Y, me.X, me.Y) < 15).OrderBy(d => Game.Dist(d.X, d.Y, me.X, me.Y)).Take(10).ToList();
         if (drops.Count > 0)
             sb.Append("drops: " + string.Join("; ", drops.Select(d => FormattableString.Invariant($"{d.Id} {d.Item.Title} ({d.Item.Rarity}) @{d.X:0.0},{d.Y:0.0}"))) + "\n");
-        var props = g.Map.Props.Where(p => p.Kind is not ("deco" or "house" or "brazier") && !(p.Kind == "chest" && g.Here.Opened.Contains(p.Id)))
+        var props = g.Map.Props.Where(p => p.Usable && !(p.OneUse && g.Here.Opened.Contains(p.Id)))
             .OrderBy(p => Game.Dist(p.X, p.Y, me.X, me.Y)).Take(6);
         sb.Append("things: " + string.Join("; ", props.Select(p => FormattableString.Invariant($"{p.Id} {p.Kind} @{p.X + p.W / 2.0:0.0},{p.Y + p.H / 2.0:0.0} d{Game.Dist(p.X, p.Y, me.X, me.Y):0}"))) + "\n");
         int left = g.Foes.Count(a => a.Alive);
@@ -296,7 +296,8 @@ public static class AgentHooks
         return sb.ToString();
     }
 
-    /// <summary>The floor around the hero: # rock, . floor, o something in the way, &lt; &gt; stairs, W waystone, C chest,
+    /// <summary>The floor around the hero: # rock, . floor, o something in the way, &lt; &gt; stairs, W waystone, C chest or
+    /// crate (c opened), B barrel or urn (, broken), S stash, O well,
     /// $ a drop, N village folk, monsters by their first letter (capital: a champion or a named foe), @ the hero.</summary>
     public static string Ascii(Game g, int rx, int ry)
     {
@@ -316,7 +317,12 @@ public static class AgentHooks
         }
         foreach (Prop p in f.Props)
         {
-            char c = p.Kind switch { "down" => '>', "up" => '<', "waystone" => 'W', "chest" => g.Here.Opened.Contains(p.Id) ? 'c' : 'C', "stash" => 'S', _ => '\0' };
+            bool spent = p.OneUse && g.Here.Opened.Contains(p.Id);
+            char c = p.Kind switch
+            {
+                "down" => '>', "up" => '<', "waystone" => 'W', "stash" => 'S', "well" => 'O',
+                "chest" or "crate" => spent ? 'c' : 'C', "barrel" or "urn" => spent ? ',' : 'B', _ => '\0',
+            };
             if (c != '\0') Put(p.X, p.Y, c);
         }
         foreach (Drop d in g.Here.Drops) Put(d.X, d.Y, '$');

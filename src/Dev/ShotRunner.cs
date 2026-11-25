@@ -108,6 +108,33 @@ public partial class ShotRunner : Node
             await Shot("skills");
             Screen.CloseAll();
 
+            // Things to use: before (glowing, the name under the cursor), opening and breaking, after.
+            Root.Instance.Play(Game.New(21, Cls.Wanderer));
+            g = Root.Instance.Game;
+            // The first floor that has a chest and something to break.
+            for (int d = 1; d <= 9; d++)
+            {
+                g.Enter(d, null);
+                if (g.Map.Props.Any(p => p.Kind == "chest") && g.Map.Props.Any(p => p.Breaks)) break;
+            }
+            g.Here.Actors.Clear();
+            Floor fl = g.Map;
+            Prop box = fl.Props.Where(p => p.Kind == "chest")
+                .OrderBy(p => fl.Props.Where(o => o.Breaks).Min(o => Math.Abs(o.X - p.X) + Math.Abs(o.Y - p.Y))).First();
+            Prop jar = fl.Props.Where(p => p.Breaks).OrderBy(p => Math.Abs(p.X - box.X) + Math.Abs(p.Y - box.Y)).First();
+            g.Me.X = (box.X + jar.X) / 2.0 + 1.5; g.Me.Y = (box.Y + jar.Y) / 2.0 + 2;
+            if (!fl.Walk(g.Me.X, g.Me.Y)) (g.Me.X, g.Me.Y) = (box.X + 0.5, box.Y + 1.6);
+            Screen.World.Zoom = 0.55f;
+            await Run(0.5);
+            Input.WarpMouse(Screen.ScreenOf(box.X + 0.5, box.Y + 0.5, 0.4f));
+            await Run(0.3);
+            await Shot("things-before");
+            g.Use(box);
+            g.Use(jar);
+            Input.WarpMouse(new Vector2(40, 40));
+            await Run(1.2);
+            await Shot("things-after");
+
             // A sorcerer in the ember halls: spells.
             Root.Instance.Play(Game.New(7, Cls.Sorcerer));
             g = Root.Instance.Game;
@@ -119,10 +146,21 @@ public partial class ShotRunner : Node
             Actor pack = g.Foes.OrderBy(a => Game.Dist(a, g.Me)).First();
             g.Me.X = pack.X + 4; g.Me.Y = pack.Y + 4;
             if (!g.Map.Walk(g.Me.X, g.Me.Y)) (g.Me.X, g.Me.Y) = (pack.X, pack.Y + 2);
+            // Harmless for the picture (the walkthrough runs slowly in software and the deep would kill him first).
+            foreach (Actor f in g.Foes) { f.DmgX = 0; f.Accuracy = 0; }
+            g.Hero.Vigour = 400; g.Hero.Changed();
+            g.Me.Life = g.Hero.S.MaxLife; g.Me.Mana = 500;
             g.OrderSkill("meteor", pack.X, pack.Y);
-            await Run(0.7);
+            await Run(0.55);
+            g.Me.Mana = 500;
             g.OrderAttack(pack.Id, "chain");
-            await Run(0.9);
+            await Run(0.45);
+            g.Me.Mana = 500;
+            g.OrderSkill("nova", g.Me.X, g.Me.Y);
+            await Run(0.3);
+            g.Me.Mana = 500;
+            g.OrderAttack(pack.Id, "firebolt");
+            await Run(0.2);
             await Shot("spells");
             await Run(0.6);
             Screen.Toggle("left", "");

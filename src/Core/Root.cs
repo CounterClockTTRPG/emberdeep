@@ -21,6 +21,7 @@ public partial class Root : Node
     public override void _Ready()
     {
         Instance = this;
+        Data.BaseBodies = name => Kit.Has(name);
         GetWindow().Title = ProjectSettings.GetSetting("application/config/name").AsString();
         string[] args = OS.GetCmdlineUserArgs();
         bool check = Array.IndexOf(args, "--check") >= 0, shots = Array.IndexOf(args, "--shots") >= 0, agent = Array.IndexOf(args, "--agent") >= 0;
@@ -59,6 +60,12 @@ public partial class Root : Node
     {
         // Closing the window keeps the game where it was.
         if (what == NotificationWMCloseRequest && Game != null && !Profile.Scratch) Profile.SaveGame(Game);
+        // Android's back button (project.godot: quit_on_go_back=false), handled like Escape.
+        if (what == NotificationWMGoBackRequest)
+        {
+            if (Current is GameScreen gs) gs.Back();
+            else if (Current is TitleScreen t) t.Back();
+        }
     }
 
     public void Show(Control c)
@@ -77,13 +84,13 @@ public partial class Root : Node
     }
 
     /// <summary>A new game in a slot, over whatever was there.</summary>
-    public void NewGame(int slot, ulong seed = 0, Cls cls = Cls.Wanderer)
+    public void NewGame(int slot, ulong seed = 0, Cls cls = Cls.Wanderer, bool female = false)
     {
         Profile.Slot = slot;
         Profile.Current.LastSlot = slot;
         Profile.Current.Save();
         if (seed == 0) seed = ((ulong)GD.Randi() << 32) | GD.Randi();
-        Play(Game.New(seed, cls));
+        Play(Game.New(seed, cls, female));
         if (!Profile.Scratch) Profile.SaveGame(Game, slot);
     }
 

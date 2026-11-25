@@ -21,6 +21,8 @@ public sealed class Stats
 public sealed class Hero
 {
     public Cls Class;
+    /// <summary>A woman (else a man): which base body the hero is dressed on.</summary>
+    public bool Female;
     public string Name = "Wanderer";
     public int Level = 1;
     public long Xp;
@@ -47,10 +49,10 @@ public sealed class Hero
 
     [JsonIgnore] private Stats _stats;
 
-    public static Hero New(Cls c)
+    public static Hero New(Cls c, bool female = false)
     {
         var (m, a, v, s) = Data.StartAttrs(c);
-        var h = new Hero { Class = c, Name = c.ToString(), Might = m, Agility = a, Vigour = v, Spirit = s };
+        var h = new Hero { Class = c, Female = female, Name = c.ToString(), Might = m, Agility = a, Vigour = v, Spirit = s };
         SkillDef first = Data.SkillsOf(c).First(sk => !sk.Passive);
         h.Skills[first.Id] = 1;
         h.Right = first.Id;

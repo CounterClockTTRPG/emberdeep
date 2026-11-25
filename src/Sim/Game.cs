@@ -145,7 +145,14 @@ public sealed partial class Game
     {
         get
         {
-            if (_map == null || _mapDepth != Depth) { _map = Floor.Make(Seed, Depth); _mapDepth = Depth; }
+            if (_map == null || _mapDepth != Depth)
+            {
+                _map = Floor.Make(Seed, Depth);
+                _mapDepth = Depth;
+                // What was broken here stays broken: its cell is open again.
+                if (Floors.TryGetValue(Depth, out FloorState st))
+                    foreach (Prop p in _map.Props.Where(p => p.Breaks && st.Opened.Contains(p.Id)).ToList()) _map.Broken(p);
+            }
             return _map;
         }
     }
@@ -156,9 +163,9 @@ public sealed partial class Game
     /// <summary>The way back in the village, beside the waystone.</summary>
     public static (double x, double y) PortalSpot => (Floor.VillageSize / 2 + 3.5, Floor.VillageSize / 2 + 1.5);
 
-    public static Game New(ulong seed, Cls cls = Cls.Wanderer)
+    public static Game New(ulong seed, Cls cls = Cls.Wanderer, bool female = false)
     {
-        var g = new Game { Seed = seed, Hero = Hero.New(cls) };
+        var g = new Game { Seed = seed, Hero = Hero.New(cls, female) };
         g.Me = new Actor { Id = 0, Def = "hero", Hero = true };
         g.Hero.Changed();
         g.Me.MaxLife = g.Me.Life = g.Hero.S.MaxLife;
@@ -456,8 +463,10 @@ public sealed partial class Game
                 (double px, double py) = p == null ? PortalSpot : (p.X + p.W / 2.0, p.Y + p.H / 2.0);
                 double reach = p == null ? 1.2 : Math.Max(p.W, p.H) / 2.0 + 1.0;
                 if (!WalkTo(Me, px, py, reach, dt)) break;
-                Use(p);
                 Halt();
+                // A barrel or an urn is broken with a swing: the blow breaks it.
+                if (p != null && p.Breaks && !Here.Opened.Contains(p.Id)) Begin(Me, "smash", px, py, -p.Id - 10);
+                else Use(p);
                 break;
             }
             case "talk":
@@ -568,7 +577,7 @@ public sealed partial class Game
         if (a.Hero)
         {
             SkillDef sk = Data.Skill(skill);
-            if (skill != "attack")
+            if (skill != "attack" && skill != "smash")
             {
                 if (sk == null || sk.Passive || Hero.Rank(skill) <= 0) return false;
                 int cost = Data.ManaCost(sk, Hero.BaseRank(skill));
@@ -713,6 +722,12 @@ public sealed partial class Game
         double fx = Math.Sin(Me.Facing), fy = Math.Cos(Me.Facing);
         switch (skill)
         {
+            case "smash":
+            {
+                Prop p = Map.Props.FirstOrDefault(x => x.Id == -target - 10);
+                if (p != null) Use(p);
+                break;
+            }
             case "attack":
                 if (s.Ranged) Shoot("arrow", tx, ty, 1, r, false);
                 else if (t != null && Dist(Me, t) <= Me.Radius + t.Radius + 1.1) Strike(t, 1, r);
@@ -1165,12 +1180,23 @@ public sealed partial class Game
         }
         switch (p.Kind)
         {
-            case "chest":
+            case "chest" or "crate":
                 if (Here.Opened.Contains(p.Id)) return;
                 Here.Opened.Add(p.Id);
-                Emit(new Ev { Kind = "chest", A = p.Id, X = p.X + 0.5, Y = p.Y + 0.5 });
-                foreach (Item it in Loot.Drop(Data.MonLevel(Depth) + 1, 2, Hero.S.MagicFind, Hero.S.GoldFind, R())) Place(it, p.X + 0.5, p.Y + 0.5);
+                Emit(new Ev { Kind = "chest", A = p.Id, X = p.X + 0.5, Y = p.Y + 0.5, Text = p.Kind });
+                foreach (Item it in Loot.Drop(Data.MonLevel(Depth) + 1, p.Kind == "chest" ? 2 : 1, Hero.S.MagicFind, Hero.S.GoldFind, R())) Place(it, p.X + 0.5, p.Y + 0.5);
                 break;
+            case "barrel" or "urn":
+            {
+                if (Here.Opened.Contains(p.Id)) return;
+                Here.Opened.Add(p.Id);
+                Map.Broken(p);
+                Emit(new Ev { Kind = "break", A = p.Id, X = p.X + 0.5, Y = p.Y + 0.5, Text = p.Kind });
+                // Now and then something inside: gold or a draught, rarely more.
+                Rng r = R();
+                if (r.Chance(0.4)) foreach (Item it in Loot.Drop(Data.MonLevel(Depth), 0.6, Hero.S.MagicFind, Hero.S.GoldFind, r)) Place(it, p.X + 0.5, p.Y + 0.5);
+                break;
+            }
             case "waystone":
                 if (Hero.Waystones.Add(Depth)) Emit(new Ev { Kind = "waystone", V = Depth, Text = $"The waystone of {Map.Def.Name} wakes." });
                 Emit(new Ev { Kind = "waymenu", V = Depth });

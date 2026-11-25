@@ -24,6 +24,9 @@ public partial class GameScreen : Control
     public string LeftPanel = "", RightPanel = "", CentrePanel = "";
     private bool _bigMap;
     private bool _lmb, _rmb, _lmbMove;
+    /// <summary>On a touchscreen, with no right button: taps use the right-hand skill while this is on.</summary>
+    private bool _skillTaps;
+    public static bool Touch => DisplayServer.IsTouchscreenAvailable();
     private double _hold;
     private Actor _hover;
     private Drop _hoverDrop;
@@ -109,13 +112,25 @@ public partial class GameScreen : Control
                 _belt.AddChild(slot);
             }
         }
-        string ssig = $"{h.Left}|{h.Right}|{string.Join(",", h.Skills.Select(kv => kv.Key + kv.Value))}";
+        string ssig = $"{h.Left}|{h.Right}|{_skillTaps}|{string.Join(",", h.Skills.Select(kv => kv.Key + kv.Value))}";
         if (ssig != _skillSig)
         {
             _skillSig = ssig;
             foreach (Node n in _skills.GetChildren()) n.QueueFree();
             _skills.AddChild(new SkillIcon(h.Left, true, Game) { CustomMinimumSize = new Vector2(66, 66), Clicked = () => Toggle("left", "skills"), Tip = "Left button: " + SkillName(h.Left) });
-            _skills.AddChild(new SkillIcon(h.Right, true, Game) { CustomMinimumSize = new Vector2(66, 66), Clicked = () => Toggle("left", "skills"), Tip = "Right button: " + SkillName(h.Right) });
+            _skills.AddChild(new SkillIcon(h.Right, true, Game)
+            {
+                CustomMinimumSize = new Vector2(66, 66), Chosen = _skillTaps,
+                // On a touchscreen this icon is the right button: tap it and taps use the skill, tap again to walk.
+                Clicked = () =>
+                {
+                    if (!Touch) { Toggle("left", "skills"); return; }
+                    _skillTaps = !_skillTaps;
+                    _skillSig = null;
+                    Say(_skillTaps ? $"Taps use {SkillName(Game.Hero.Right)}" : "Taps walk and fight", UITheme.Dim);
+                },
+                Tip = Touch ? "Tap: taps use " + SkillName(h.Right) : "Right button: " + SkillName(h.Right),
+            });
             _skills.AddChild(new Control { CustomMinimumSize = new Vector2(10, 0) });
             string keys = "QWERT";
             var actives = Data.SkillsOf(h.Class).Where(s => !s.Passive).ToList();
@@ -303,6 +318,11 @@ public partial class GameScreen : Control
         Vector2 m = Mouse;
         _hover = Over(m) ? null : World.ActorAt(m);
         _hoverDrop = _hover == null && !Over(m) ? World.DropAt(m) : null;
+        // A usable thing under the cursor lights up and says its name.
+        int prop = 0;
+        if (_hover == null && _hoverDrop == null && !Over(m) && World.Ground(m) is var (gx, gy)) prop = World.PropAt(gx, gy);
+        World.HoverProp = prop > 0 ? prop : 0;
+        MouseDefaultCursorShape = _hover != null || _hoverDrop != null || prop != 0 ? CursorShape.PointingHand : CursorShape.Arrow;
     }
 
     /// <summary>Is the mouse over the band or an open panel (so it does not order the hero)?</summary>
@@ -321,6 +341,14 @@ public partial class GameScreen : Control
         {
             if (mb.ButtonIndex == MouseButton.WheelUp && mb.Pressed) { World.Zoom = Mathf.Max(0.55f, World.Zoom - 0.08f); return; }
             if (mb.ButtonIndex == MouseButton.WheelDown && mb.Pressed) { World.Zoom = Mathf.Min(1.5f, World.Zoom + 0.08f); return; }
+            if (mb.ButtonIndex == MouseButton.Left && _skillTaps)
+            {
+                // Skill taps: the left button (a finger) acts as the right one.
+                _rmb = mb.Pressed;
+                if (mb.Pressed && !Over(mb.Position)) { RightClick(mb.Position); _hold = 0; }
+                AcceptEvent();
+                return;
+            }
             if (mb.ButtonIndex == MouseButton.Left)
             {
                 _lmb = mb.Pressed;
@@ -390,6 +418,14 @@ public partial class GameScreen : Control
         }
     }
 
+    /// <summary>Esc or Android's back button: the big map, then the panels, then the title (which saves).</summary>
+    public void Back()
+    {
+        if (_bigMap) _bigMap = false;
+        else if (AnyOpen) CloseAll();
+        else Root.Instance.ShowTitle();
+    }
+
     // ---- keys -------------------------------------------------------------------------------------------------------
 
     public override void _UnhandledKeyInput(InputEvent e)
@@ -397,11 +433,7 @@ public partial class GameScreen : Control
         if (e is not InputEventKey { Pressed: true, Echo: false } k) return;
         switch (k.Keycode)
         {
-            case Key.Escape:
-                if (_bigMap) _bigMap = false;
-                else if (AnyOpen) CloseAll();
-                else Root.Instance.ShowTitle();
-                break;
+            case Key.Escape: Back(); break;
             case Key.I or Key.B: Toggle("right", "inventory"); break;
             case Key.C or Key.A: Toggle("left", "character"); break;
             case Key.S or Key.K: Toggle("left", "skills"); break;

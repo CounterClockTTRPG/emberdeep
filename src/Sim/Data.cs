@@ -79,7 +79,17 @@ public static class Data
         _ => (10, 15, 15, 30),
     };
 
+    /// <summary>A class's own figure, dressed as it is (used until the base bodies and their pieces exist).</summary>
     public static string Body(Cls c) => c switch { Cls.Wanderer => "body-hero", Cls.Rogue => "body-rogue", _ => "body-sorcerer" };
+
+    /// <summary>
+    /// The hero's body: the man's or the woman's base body, dressed piece by piece as equipped, when the view has it
+    /// (<see cref="BaseBodies"/>); otherwise the class's own figure.
+    /// </summary>
+    public static string HeroBody(Hero h) => BaseBodies?.Invoke(h.Female ? "body-woman" : "body-man") == true ? (h.Female ? "body-woman" : "body-man") : Body(h.Class);
+
+    /// <summary>Set by the view: is there such a body model? (The rules know nothing of files.)</summary>
+    public static Func<string, bool> BaseBodies;
 
     public static string Blurb(Cls c) => c switch
     {

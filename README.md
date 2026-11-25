@@ -21,11 +21,14 @@ stayed asleep.
 ./play.sh --shots                  # the screenshot walkthrough into shots/
 ./play.sh --agent                  # remote control: scripts/agent.sh "new rogue; state"
 python3 scripts/assets.py          # bring new art in from ../assetgen
+bash scripts/export-android.sh     # an Android APK (build/android/Emberdeep.apk), installed if a phone is connected
 ```
 
 Controls: left click to walk, fight, pick up, use and talk (hold to keep walking); right click for the chosen skill
 (hold to repeat); Shift + left click to attack in place; Q W E R T choose the skill; 1-4 the belt; I C S the
-inventory, character and skills; Tab the map; the wheel zooms; Esc closes panels.
+inventory, character and skills; Tab the map; the wheel zooms; Esc closes panels. On a phone: tap to walk, fight,
+pick up and use; tap the right-hand skill icon to make taps use that skill (tap it again to go back); the back button
+closes panels.
 
 See CLAUDE.md for the layout. The backlog is in Tasker, project EMB.
 
