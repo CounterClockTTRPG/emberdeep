@@ -107,6 +107,9 @@ public partial class ShotRunner : Node
             Screen.Open("right", "");
             await Shot("skills");
             Screen.CloseAll();
+            Screen.Open("centre", "menu");
+            await Shot("menu");
+            Screen.CloseAll();
 
             // Things to use: before (glowing, the name under the cursor), opening and breaking, after.
             Root.Instance.Play(Game.New(21, Cls.Wanderer));

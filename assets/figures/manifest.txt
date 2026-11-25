@@ -18,6 +18,7 @@ body-hero body-hero-944484
 body-hollow body-hollow-6fec72
 body-imp body-imp-e2c250
 body-lich body-lich-2c4226
+body-man body-man-8a2b6d
 body-merchant body-merchant-8d5d5b
 body-priest body-priest-74c4c7
 body-rogue body-rogue-8536ca

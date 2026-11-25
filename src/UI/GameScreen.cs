@@ -27,7 +27,7 @@ public partial class GameScreen : Control
     /// <summary>On a touchscreen, with no right button: taps use the right-hand skill while this is on.</summary>
     private bool _skillTaps;
     public static bool Touch => DisplayServer.IsTouchscreenAvailable();
-    private double _hold;
+    private double _hold, _sinceSave;
     private Actor _hover;
     private Drop _hoverDrop;
     private readonly List<(string text, Color c, double t)> _log = new();
@@ -94,6 +94,7 @@ public partial class GameScreen : Control
         buttons.AddChild(_invB);
         buttons.AddChild(_skillB);
         buttons.AddChild(UITheme.B("Map", () => _bigMap = !_bigMap, 15, "Map (Tab)"));
+        buttons.AddChild(UITheme.B("Menu", () => Toggle("centre", "menu"), 15, "Menu (Esc)"));
     }
 
     private void RefreshBand()
@@ -178,6 +179,7 @@ public partial class GameScreen : Control
             "talk" => new TalkPanel(this),
             "waystone" => new WaystonePanel(this),
             "notice" => new NoticePanel(this),
+            "menu" => new MenuPanel(this),
             _ => null,
         };
         if (p == null) return;
@@ -219,7 +221,11 @@ public partial class GameScreen : Control
     public override void _Process(double delta)
     {
         // Under an agent, time only passes while a command runs (AgentServer.Running is always true otherwise).
-        if (AgentServer.Running) Game.Step(delta);
+        // The menu pauses the game (it is played alone); under an agent, time passes only while a command runs.
+        if (AgentServer.Running && CentrePanel != "menu") Game.Step(delta);
+        // Saved every two minutes of play (and on every floor change), so a crash loses little.
+        _sinceSave += delta;
+        if (_sinceSave > 120) Autosave();
         foreach (Ev e in Game.Events) Happened(e);
         Game.Events.Clear();
         World.Sync(delta);
@@ -269,6 +275,7 @@ public partial class GameScreen : Control
                 break;
             case "nomana": Sounds.Play("nomana", 0.4f, 0, 250); Say("Not enough mana.", UITheme.Dim); break;
             case "enter":
+                Autosave();
                 Sounds.Play("stairs", 0.6f);
                 Sounds.Mood(Sounds.MoodFor(e.V));
                 Banner(e.Text);
@@ -286,7 +293,17 @@ public partial class GameScreen : Control
             case "won": Sounds.Play("win", 0.9f); Banner("Victory"); Say(e.Text, UITheme.Accent); Open("centre", "notice"); break;
             case "portal": Sounds.Play("waystone", 0.6f); break;
             case "shieldbreak": Say("Your arcane shield breaks.", UITheme.Dim); break;
+            case "restock": Say("The deep has filled again since you were here.", UITheme.Dim); break;
+            case "shrine": Sounds.Play("waystone", 0.8f); Banner(e.Text.Split(':')[0]); Say(e.Text, UITheme.Accent); break;
+            case "blessing-end": Say("The shrine's blessing fades.", UITheme.Dim); break;
         }
+    }
+
+    /// <summary>Write the game to its slot now (not in the self-check or the walkthrough).</summary>
+    public void Autosave()
+    {
+        _sinceSave = 0;
+        if (!Profile.Scratch) Profile.SaveGame(Game);
     }
 
     private void StartTalk(string who)
@@ -322,6 +339,8 @@ public partial class GameScreen : Control
         int prop = 0;
         if (_hover == null && _hoverDrop == null && !Over(m) && World.Ground(m) is var (gx, gy)) prop = World.PropAt(gx, gy);
         World.HoverProp = prop > 0 ? prop : 0;
+        World.HoverDrop = _hoverDrop?.Id ?? 0;
+        World.AllLabels = Touch || Input.IsKeyPressed(Key.Alt);
         MouseDefaultCursorShape = _hover != null || _hoverDrop != null || prop != 0 ? CursorShape.PointingHand : CursorShape.Arrow;
     }
 
@@ -422,8 +441,9 @@ public partial class GameScreen : Control
     public void Back()
     {
         if (_bigMap) _bigMap = false;
+        else if (CentrePanel == "menu") Open("centre", "");
         else if (AnyOpen) CloseAll();
-        else Root.Instance.ShowTitle();
+        else Open("centre", "menu");
     }
 
     // ---- keys -------------------------------------------------------------------------------------------------------
@@ -478,6 +498,11 @@ public partial class GameScreen : Control
         _hud.DrawRect(new Rect2(x0, size.Y - Band + 8, (float)((x1 - x0) * frac), 7), new Color(0.85f, 0.65f, 0.25f));
         _hud.DrawString(font, new Vector2(x0, size.Y - 10), $"Level {h.Level} {h.Class}   {h.Gold} gold   {Game.Map.Def.Name}", HorizontalAlignment.Left, -1, 15, UITheme.Dim);
         if (me.ShieldT > 0) _hud.DrawString(font, new Vector2(x1 - 220, size.Y - 10), $"Arcane shield {me.Shield:0}", HorizontalAlignment.Left, -1, 15, new Color(0.5f, 0.7f, 1f));
+        if (h.BlessingLeft > 0)
+        {
+            var bl = Data.Shrines.FirstOrDefault(x => x.id == h.Blessing);
+            _hud.DrawString(font, new Vector2(x1 - 460, size.Y - 10), $"{bl.name} {h.BlessingLeft:0} s", HorizontalAlignment.Left, -1, 15, UITheme.Accent);
+        }
         // The foe (or thing) under the cursor, at the top.
         Actor t = _hover;
         if (t == null && Game.Order.Kind == "attack") t = Game.Find(Game.Order.Target);
@@ -488,7 +513,8 @@ public partial class GameScreen : Control
             _hud.DrawRect(new Rect2(cx - w / 2, 14, (float)(w * t.Life / t.MaxLife), 26), new Color(0.55f, 0.08f, 0.06f, 0.95f));
             Color nc = t.Title != null ? (t.Champion ? new Color(0.5f, 0.65f, 1f) : new Color(0.95f, 0.8f, 0.4f)) : UITheme.Text;
             _hud.DrawString(font, new Vector2(cx - w / 2, 34), t.Name, HorizontalAlignment.Center, w, 17, nc);
-            _hud.DrawString(font, new Vector2(cx - w / 2, 58), $"level {t.Level}", HorizontalAlignment.Center, w, 13, UITheme.Dim);
+            string traits = t.Traits.Count > 0 ? string.Join(", ", t.Traits.Select(Data.TraitWord)) + ", " : "";
+            _hud.DrawString(font, new Vector2(cx - w / 2, 58), $"{traits}level {t.Level}", HorizontalAlignment.Center, w, 13, t.Traits.Count > 0 ? World3D.TraitColour(t.Traits[0]) : UITheme.Dim);
         }
         else if (_hover?.Npc == true)
             _hud.DrawString(font, new Vector2(size.X / 2 - 200, 34), "Click to talk", HorizontalAlignment.Center, 400, 16, UITheme.Accent);

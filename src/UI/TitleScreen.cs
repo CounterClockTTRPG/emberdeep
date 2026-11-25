@@ -16,6 +16,7 @@ public partial class TitleScreen : Control
     private int _selected;
     private Cls _class = Cls.Wanderer;
     private bool _female;
+    private string _name;
     private TitleStage _stage;
     private Control _column;
     private Label _caption, _captionSub;
@@ -76,7 +77,7 @@ public partial class TitleScreen : Control
         }
         Game g = Profile.LoadGame(_selected);
         _stage.Stand(g?.Hero ?? Hero.New(Cls.Wanderer), g == null);
-        _caption.Text = g == null ? "" : $"Level {g.Hero.Level} {g.Hero.Class}";
+        _caption.Text = g == null ? "" : g.Hero.Name == g.Hero.Class.ToString() ? $"Level {g.Hero.Level} {g.Hero.Class}" : $"{g.Hero.Name}, level {g.Hero.Level} {g.Hero.Class}";
         _captionSub.Text = g == null ? "" : g.Won ? "Slayer of the Ashen Warden" : $"Last seen in {Data.Floor(g.Depth).Name}";
     }
 
@@ -112,7 +113,7 @@ public partial class TitleScreen : Control
         {
             int s = slot;
             Game g = Profile.LoadGame(s);
-            string line = g == null ? "Empty" : $"{g.Hero.Class}, level {g.Hero.Level}";
+            string line = g == null ? "Empty" : g.Hero.Name == g.Hero.Class.ToString() ? $"{g.Hero.Class}, level {g.Hero.Level}" : $"{g.Hero.Name}, level {g.Hero.Level} {g.Hero.Class}";
             string sub = g == null ? "A new hero can begin here" : g.Won ? "The Warden is slain" : Data.Floor(g.Depth).Name;
             col.AddChild(new SlotRow($"Slot {s}", line, sub, s == _selected, () => { _selected = s; Build(); Show(); }));
         }
@@ -154,15 +155,25 @@ public partial class TitleScreen : Control
         foreach (bool f in new[] { false, true })
         {
             bool female = f;
-            Button b = UITheme.Flat(f ? "A woman" : "A man", () => { _female = female; Build(); Show(); }, 20, _female == f ? UITheme.Bone : UITheme.Ash);
+            Button b = UITheme.Flat(f ? "A woman" : "A man", () => { if (_female != female) _name = Hero.SuggestName(female, (ulong)Time.GetTicksUsec()); _female = female; Build(); Show(); }, 20, _female == f ? UITheme.Bone : UITheme.Ash);
             if (_female == f) b.AddThemeStyleboxOverride("normal", new StyleBoxLine { Color = UITheme.Ember, Thickness = 2, Vertical = false, GrowBegin = 0, GrowEnd = 0 });
             sex.AddChild(b);
         }
         col.AddChild(sex);
+        // A name, with a suggestion that changes with the choice of a man or a woman.
+        _name ??= Hero.SuggestName(_female, (ulong)Time.GetTicksMsec());
+        var nameRow = UITheme.H(10);
+        nameRow.AddChild(UITheme.L("Name", 19, UITheme.Ash));
+        var edit = new LineEdit { Text = _name, MaxLength = 20, CustomMinimumSize = new Vector2(240, 0), PlaceholderText = "a name" };
+        edit.AddThemeFontSizeOverride("font_size", 19);
+        edit.TextChanged += t => _name = t;
+        nameRow.AddChild(edit);
+        nameRow.AddChild(UITheme.Flat("another", () => { _name = Hero.SuggestName(_female, (ulong)Time.GetTicksUsec()); Build(); Show(); }, 17, UITheme.Ash));
+        col.AddChild(nameRow);
         col.AddChild(new Control { CustomMinimumSize = new Vector2(0, 16) });
         var actions = UITheme.H(28);
         string who = _class switch { Cls.Wanderer => "the Wanderer", Cls.Rogue => "the Rogue", _ => "the Sorcerer" };
-        Button go = UITheme.Flat($"Go down as {who}", () => Root.Instance.NewGame(Choosing, 0, _class, _female), 30, UITheme.Ember, UITheme.Title);
+        Button go = UITheme.Flat($"Go down as {who}", () => Root.Instance.NewGame(Choosing, 0, _class, _female, _name), 30, UITheme.Ember, UITheme.Title);
         actions.AddChild(go);
         actions.AddChild(UITheme.Flat("Back", () => { Choosing = 0; Build(); Show(); }, 19, UITheme.Ash));
         col.AddChild(actions);

@@ -247,6 +247,12 @@ public partial class World3D : Node3D
         bool spent = p.OneUse && Game.Here.Opened.Contains(p.Id);
         if (spent && (p.Kind is "chest" or "crate")) OpenLid(node, false);
         if (spent && p.Breaks) Shatter(p, node, false);
+        if (p.Kind == "shrine")
+        {
+            OmniLight3D fire = new() { Name = "ShrineLight", LightColor = new Color(1f, 0.55f, 0.2f), LightEnergy = spent ? 0 : 2.2f, OmniRange = 6, Position = new Vector3(0, 1.8f, 0) };
+            node.AddChild(fire);
+            if (spent) QuenchShrine(node);
+        }
         if (p.Usable)
         {
             var meshes = node.FindChildren("*", "MeshInstance3D", true, false).Cast<MeshInstance3D>().ToList();
@@ -319,6 +325,17 @@ public partial class World3D : Node3D
             tw.Node.Transform = new Transform3D(rot, pos);
             if (t >= 1) { tw.Node.Transform = tw.To; _tweens.Remove(tw); }
         }
+    }
+
+    /// <summary>A used shrine: its fire and candles go out, its light dies.</summary>
+    private static void QuenchShrine(Node3D shrine)
+    {
+        foreach (Node n in shrine.FindChildren("*", "", true, false))
+        {
+            string name = n.Name.ToString();
+            if (n is Node3D n3 && (name.Contains("flame") || name.Contains("fire_core") || name == "embers")) n3.Visible = false;
+        }
+        if (shrine.GetNodeOrNull<OmniLight3D>("ShrineLight") is OmniLight3D l) l.LightEnergy = 0;
     }
 
     /// <summary>A chest's or crate's lid swings up on its hinge (or is simply open, when the floor is built again).</summary>
@@ -508,7 +525,17 @@ public partial class World3D : Node3D
         {
             MonDef m = a.M;
             fig.Hold(m.Right, null, m.Left == "shield" ? "shield" : null);
-            if (a.Champion) fig.Tint(new Color(1.35f, 0.75f, 0.65f));
+            if (a.Champion)
+            {
+                // A champion glows with its first trait's colour: a tint and a haze of motes around it.
+                Color tc = TraitColour(a.Traits.FirstOrDefault());
+                fig.Tint(new Color(1, 1, 1).Lerp(tc * 1.4f, 0.35f));
+                var aura = Vfx.Trail(tc * 1.6f, tc * 0.5f, 0.18f, 24, 0.9f);
+                aura.EmissionSphereRadius = 0.5f;
+                aura.Gravity = new Vector3(0, 0.9f, 0);
+                aura.Position = new Vector3(0, h * 0.4f, 0);
+                fig.AddChild(aura);
+            }
             else if (a.Title != null && m.Ai != Ai.Boss) fig.Tint(new Color(1.2f, 1.05f, 0.7f));
         }
         if (a.Npc)
@@ -655,6 +682,27 @@ public partial class World3D : Node3D
         return m.Ai == Ai.Boss ? (a.ActT < 0.05 && (int)(Game.Time) % 2 == 0 ? "smash" : "overhead") : m.Clip;
     }
 
+    /// <summary>The drop under the cursor (its name always shows), and whether every name shows (Alt held, a touchscreen).</summary>
+    public int HoverDrop;
+    public bool AllLabels;
+
+    /// <summary>
+    /// A drop's name: shown for gold, draughts and anything magic or better, for plain things only while Alt is held
+    /// or it is under the cursor; names of drops lying close together stack up instead of covering each other.
+    /// </summary>
+    private void Labels(Drop d, Node3D node)
+    {
+        if (node.GetNodeOrNull<Label3D>("Name") is not Label3D label) return;
+        Item it = d.Item;
+        bool plain = it.Rarity == Rarity.Plain && it.B?.Wearable == true;
+        label.Visible = !plain || AllLabels || d.Id == HoverDrop;
+        if (!label.Visible) return;
+        int rank = 0;
+        foreach (Drop o in Game.Here.Drops)
+            if (o.Id < d.Id && Game.Dist(o.X, o.Y, d.X, d.Y) < 1.1 && (o.Item.Rarity != Rarity.Plain || o.Item.B?.Wearable != true || AllLabels || o.Id == HoverDrop)) rank++;
+        label.Position = new Vector3(0, 0.6f + 0.24f * rank, 0);
+    }
+
     /// <summary>Drops that have just fallen (from a monster, a chest), by id: when, so they tumble down.</summary>
     private readonly Dictionary<int, double> _falling = new();
 
@@ -673,6 +721,7 @@ public partial class World3D : Node3D
                 node.AddChild(body);
                 var label = new Label3D
                 {
+                    Name = "Name",
                     Text = d.Item.Base == "gold" ? $"{d.Item.Count} gold" : d.Item.Title, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
                     NoDepthTest = true, FontSize = 28, PixelSize = 0.006f, OutlineSize = 8, Modulate = RarityColour(d.Item), Position = new Vector3(0, 0.6f, 0),
                 };
@@ -680,6 +729,7 @@ public partial class World3D : Node3D
                 _dyn.AddChild(node);
                 _drops[d.Id] = node;
             }
+            Labels(d, node);
             if (_falling.TryGetValue(d.Id, out double born))
             {
                 // Thrown up out of the body and tumbling down onto the floor, about half a second.
@@ -724,6 +774,17 @@ public partial class World3D : Node3D
             });
         return holder;
     }
+
+    public static Color TraitColour(string trait) => trait switch
+    {
+        "fire" => new Color(1f, 0.45f, 0.12f),
+        "frost" => new Color(0.5f, 0.8f, 1f),
+        "swift" => new Color(1f, 0.9f, 0.4f),
+        "stone" => new Color(0.7f, 0.68f, 0.62f),
+        "vampiric" => new Color(0.65f, 0.25f, 0.8f),
+        "mighty" => new Color(0.95f, 0.2f, 0.15f),
+        _ => new Color(1f, 0.6f, 0.5f),
+    };
 
     public static Color RarityColour(Item it) => it.Base == "gold" ? new Color(0.95f, 0.8f, 0.35f) : it.Rarity switch
     {
@@ -1031,6 +1092,15 @@ public partial class World3D : Node3D
             case "chest":
                 if (_props.TryGetValue(e.A, out Node3D chest)) OpenLid(chest, true);
                 break;
+            case "shrine":
+                if (_props.TryGetValue(e.A, out Node3D shrine))
+                {
+                    QuenchShrine(shrine);
+                    Vfx.Burst(_dyn, shrine.Position + new Vector3(0, 1.3f, 0), new Color(1f, 0.8f, 0.4f) * 2f, new Color(1f, 0.4f, 0.1f), 50, 1, 3, 0.3f, 1.0f, new Vector3(0, 2, 0), 30, Vector3.Up, true, null, 0.3f);
+                    Vfx.Burst(_dyn, At(Game.Me.X, Game.Me.Y, 0.2f), new Color(1f, 0.85f, 0.5f) * 1.8f, new Color(1f, 0.6f, 0.2f), 40, 1.5f, 3, 0.15f, 1.2f, new Vector3(0, 0.5f, 0), 15, Vector3.Up, true, Vfx.Shard, 0.6f);
+                    Flash(shrine.Position + new Vector3(0, 1.5f, 0), new Color(1f, 0.6f, 0.25f), 5, 9, 0.8f);
+                }
+                break;
             case "break":
                 if (_props.TryGetValue(e.A, out Node3D thing) && Game.Map.Props.FirstOrDefault(x => x.Id == e.A) is Prop bp) Shatter(bp, thing, true);
                 break;
@@ -1141,7 +1211,9 @@ public partial class World3D : Node3D
         foreach (Drop d in Game.Here.Drops.OrderBy(d => Game.Dist(d.X, d.Y, Game.Me.X, Game.Me.Y)))
         {
             if (Game.Dist(d.X, d.Y, Game.Me.X, Game.Me.Y) > 25) continue;
-            Vector2 label = ScreenOf(d.X, d.Y, 0.6f), icon = ScreenOf(d.X, d.Y, 0.05f);
+            float ly = _drops.TryGetValue(d.Id, out Node3D dn) && dn.GetNodeOrNull<Label3D>("Name") is Label3D lab && lab.Visible ? lab.Position.Y : -1;
+            Vector2 label = ScreenOf(d.X, d.Y, Math.Max(0.6f, ly)), icon = ScreenOf(d.X, d.Y, 0.05f);
+            if (ly < 0) label = new Vector2(-9999, -9999);
             float w = Math.Max(40, (d.Item.Base == "gold" ? 9 : d.Item.Title.Length) * 5.2f);
             if (Math.Abs(p.X - label.X) < w && Math.Abs(p.Y - label.Y) < 11) return d;
             if (p.DistanceTo(icon) < 22) return d;

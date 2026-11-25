@@ -45,14 +45,52 @@ public sealed class Hero
     /// <summary>The skills on the left and right mouse buttons ("attack" is the plain weapon attack).</summary>
     public string Left = "attack", Right;
     public int Kills, Deaths;
+    /// <summary>A shrine's blessing (Data.Shrines id) and the seconds it has left.</summary>
+    public string Blessing;
+    public double BlessingLeft;
+    /// <summary>How many times the elder has unlearned the hero's points (the first is free).</summary>
+    public int Respecs;
+
+    /// <summary>What unlearning costs now: nothing the first time, then 100 gold a level.</summary>
+    public int RespecCost => Respecs == 0 ? 0 : 100 * Level;
+
+    /// <summary>
+    /// Unlearn every point: the attributes go back to the class's own, the skills to the first at rank 1, and every
+    /// point spent comes back to spend again. Null when done, else why not.
+    /// </summary>
+    public string Respec()
+    {
+        if (Gold < RespecCost) return $"it costs {RespecCost} gold";
+        Gold -= RespecCost;
+        Respecs++;
+        var (m, a, v, s) = Data.StartAttrs(Class);
+        AttrPoints += Might - m + Agility - a + Vigour - v + Spirit - s;
+        Might = m; Agility = a; Vigour = v; Spirit = s;
+        SkillDef first = Data.SkillsOf(Class).First(sk => !sk.Passive);
+        SkillPoints += Skills.Values.Sum() - 1;
+        Skills = new Dictionary<string, int> { [first.Id] = 1 };
+        Left = "attack";
+        Right = first.Id;
+        Changed();
+        return null;
+    }
+
+    /// <summary>A name to suggest for a new hero, from a seed.</summary>
+    public static string SuggestName(bool female, ulong seed)
+    {
+        string[] names = female
+            ? new[] { "Aldis", "Brenna", "Corra", "Edda", "Ilsa", "Maudry", "Nessa", "Orla", "Rowan", "Sabel", "Tamsin", "Wenna" }
+            : new[] { "Aldric", "Bram", "Cael", "Dunstan", "Edric", "Garrick", "Hale", "Oswin", "Roan", "Teague", "Ulric", "Wystan" };
+        return names[(int)(seed % (ulong)names.Length)];
+    }
     public int Deepest;
 
     [JsonIgnore] private Stats _stats;
 
-    public static Hero New(Cls c, bool female = false)
+    public static Hero New(Cls c, bool female = false, string name = null)
     {
         var (m, a, v, s) = Data.StartAttrs(c);
-        var h = new Hero { Class = c, Female = female, Name = c.ToString(), Might = m, Agility = a, Vigour = v, Spirit = s };
+        var h = new Hero { Class = c, Female = female, Name = string.IsNullOrWhiteSpace(name) ? c.ToString() : name.Trim(), Might = m, Agility = a, Vigour = v, Spirit = s };
         SkillDef first = Data.SkillsOf(c).First(sk => !sk.Passive);
         h.Skills[first.Id] = 1;
         h.Right = first.Id;
@@ -83,7 +121,8 @@ public sealed class Hero
             PlusSkills = Sum(Stat.Skills),
         };
         int R(string id) => Skills.TryGetValue(id, out int r) && r > 0 ? r + st.PlusSkills : 0;
-        st.MaxLife = (4 * st.Vigour + 3 * (Level - 1) + Sum(Stat.Life)) * (1 + 0.05 * R("brawn"));
+        // The wanderer's hard skin: a fifth more life than the others (and some life back from blows, below).
+        st.MaxLife = (4 * st.Vigour + 3 * (Level - 1) + Sum(Stat.Life)) * (1 + 0.05 * R("brawn")) * (Class == Cls.Wanderer ? 1.2 : 1);
         st.MaxMana = 2 * st.Spirit + 2 * (Level - 1) + Sum(Stat.Mana);
         double armour = Equip.Where(i => i != null).Sum(i => i.Armour);
         st.Armour = (armour + st.Agility / 4.0) * (1 + 0.1 * R("ironskin"));
@@ -113,7 +152,7 @@ public sealed class Hero
         st.AttackTime /= 1 + Sum(Stat.AttackSpeed) / 100.0;
         st.CastTime = 0.65 / (1 + Sum(Stat.CastSpeed) / 100.0);
         st.SpellPct = st.Spirit * 0.5 + Sum(Stat.SpellDmg) + (w?.B.SpellPct ?? 0) + 6 * R("arcane");
-        st.LifeSteal = Sum(Stat.LifeSteal);
+        st.LifeSteal = Sum(Stat.LifeSteal) + (Class == Cls.Wanderer && !st.Ranged ? 3 : 0);
         int fire = Sum(Stat.FireDmg), cold = Sum(Stat.ColdDmg), light = Sum(Stat.LightDmg);
         st.FireMin = fire > 0 ? Math.Max(1, fire / 2) : 0; st.FireMax = fire;
         st.ColdMin = cold > 0 ? Math.Max(1, cold / 2) : 0; st.ColdMax = cold;
@@ -124,6 +163,16 @@ public sealed class Hero
         st.LightRes = Math.Min(75, Sum(Stat.LightRes) + all);
         st.MagicFind = Sum(Stat.MagicFind);
         st.GoldFind = Sum(Stat.GoldFind);
+        switch (BlessingLeft > 0 ? Blessing : null)
+        {
+            case "iron": st.Armour *= 1.6; break;
+            case "embers":
+                st.DMin *= 1.4; st.DMax *= 1.4; st.SpellPct += 40;
+                st.FireMin *= 1.4; st.FireMax *= 1.4; st.ColdMin *= 1.4; st.ColdMax *= 1.4; st.LightMin *= 1.4; st.LightMax *= 1.4;
+                break;
+            case "swift": st.AttackTime /= 1.3; st.CastTime /= 1.3; st.MoveSpeed *= 1.2; break;
+            case "gold": st.GoldFind += 100; st.MagicFind += 40; break;
+        }
         return st;
     }
 

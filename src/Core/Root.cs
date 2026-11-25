@@ -84,13 +84,13 @@ public partial class Root : Node
     }
 
     /// <summary>A new game in a slot, over whatever was there.</summary>
-    public void NewGame(int slot, ulong seed = 0, Cls cls = Cls.Wanderer, bool female = false)
+    public void NewGame(int slot, ulong seed = 0, Cls cls = Cls.Wanderer, bool female = false, string name = null)
     {
         Profile.Slot = slot;
         Profile.Current.LastSlot = slot;
         Profile.Current.Save();
         if (seed == 0) seed = ((ulong)GD.Randi() << 32) | GD.Randi();
-        Play(Game.New(seed, cls, female));
+        Play(Game.New(seed, cls, female, name));
         if (!Profile.Scratch) Profile.SaveGame(Game, slot);
     }
 
@@ -98,6 +98,7 @@ public partial class Root : Node
     {
         Game g = Profile.LoadGame(slot);
         if (g == null) return false;
+        g.Restock();
         Profile.Slot = slot;
         Profile.Current.LastSlot = slot;
         Profile.Current.Save();

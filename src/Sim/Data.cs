@@ -93,7 +93,7 @@ public static class Data
 
     public static string Blurb(Cls c) => c switch
     {
-        Cls.Wanderer => "A sellsword come home to a dying village. Sword and shield, a hard skin and a louder voice.",
+        Cls.Wanderer => "A sellsword come home to a dying village. Sword and shield, a hard skin (more life, life back from his blows) and a louder voice.",
         Cls.Rogue => "A barrow-scout who knows the graves by name. A bow, quick feet and a cold eye.",
         _ => "A scholar of the ember-runes, sent from the city. Fire, frost and lightning, and little else between him and the dark.",
     };
@@ -223,6 +223,30 @@ public static class Data
     public static IEnumerable<MonDef> MonstersFor(int depth) =>
         Monsters.Where(m => m.Ai != Ai.Boss && depth >= m.MinDepth && depth <= m.MaxDepth);
 
+    /// <summary>A champion pack's traits: the word in its name, what it does (in Game), its colour (in the view).</summary>
+    public static readonly (string id, string word, string about)[] Traits =
+    {
+        ("fire", "Fire-touched", "blows burn; bursts into flame when slain"),
+        ("swift", "Swift", "moves and strikes far faster"),
+        ("stone", "Stone-skinned", "shrugs off much of a weapon's damage"),
+        ("frost", "Frost-touched", "blows chill and slow"),
+        ("vampiric", "Vampiric", "heals itself with every blow"),
+        ("mighty", "Mighty", "strikes a third again as hard"),
+    };
+
+    public static string TraitWord(string id) => Traits.FirstOrDefault(t => t.id == id).word ?? id;
+
+    /// <summary>The shrines' blessings: a name, what it does, for how long (0: at once).</summary>
+    public static readonly (string id, string name, string about, double seconds)[] Shrines =
+    {
+        ("iron", "Shrine of Iron", "+60% armour", 120),
+        ("embers", "Shrine of Embers", "+40% damage, weapon and spells", 120),
+        ("swift", "Shrine of the Swift", "+30% attack and casting speed, +20% walking speed", 120),
+        ("wisdom", "Shrine of Wisdom", "+50% experience", 120),
+        ("gold", "Shrine of Gold", "+100% gold, +40% better items", 120),
+        ("mending", "Shrine of Mending", "life and mana made whole", 0),
+    };
+
     // ---- the hero's growth ------------------------------------------------------------------------------------------
 
     /// <summary>Experience to go from a level to the next.</summary>
@@ -309,6 +333,26 @@ public static class Data
         new("of Precision", false, Stat.Crit, 2, 10, 5, "wj"),
         new("of Greed", false, Stat.GoldFind, 15, 80, 1, "aj"),
         new("of Mastery", false, Stat.Skills, 1, 2, 10, "wj"),
+    };
+
+    /// <summary>The unique items: a name, a base, the level it needs, its fixed affixes.</summary>
+    public static readonly (string name, string baseId, int level, (Stat stat, int value)[] mods)[] UniqueItems =
+    {
+        ("Graveward", "buckler", 3, new[] { (Stat.Block, 10), (Stat.Armour, 15), (Stat.Life, 15), (Stat.AllRes, 10) }),
+        ("Hask's Cleaver", "hatchet", 4, new[] { (Stat.DmgPct, 80), (Stat.LifeSteal, 5), (Stat.AttackSpeed, 20) }),
+        ("Wort's Knucklebones", "ring", 5, new[] { (Stat.ColdRes, 30), (Stat.MagicFind, 25), (Stat.Agility, 6) }),
+        ("The Barrow Lantern", "amulet", 6, new[] { (Stat.Spirit, 10), (Stat.Mana, 30), (Stat.ManaRegen, 50) }),
+        ("Ashstrider", "leather-boots", 7, new[] { (Stat.MoveSpeed, 25), (Stat.FireRes, 30), (Stat.Agility, 8) }),
+        ("Kael's Brand", "ember-staff", 8, new[] { (Stat.SpellDmg, 60), (Stat.FireDmg, 20), (Stat.CastSpeed, 30), (Stat.Skills, 1) }),
+        ("Thornwhisper", "long-bow", 9, new[] { (Stat.DmgPct, 90), (Stat.Accuracy, 120), (Stat.Crit, 8) }),
+        ("The Ossuary Coat", "chain-hauberk", 10, new[] { (Stat.ArmourPct, 100), (Stat.Life, 40), (Stat.LifeRegen, 5) }),
+        ("Cinderfist", "gauntlets", 13, new[] { (Stat.FireDmg, 18), (Stat.AttackSpeed, 20), (Stat.Might, 12) }),
+        ("Emberheart", "amulet", 14, new[] { (Stat.Skills, 1), (Stat.AllRes, 15), (Stat.Life, 30) }),
+        ("Bulwark of Emberwick", "tower-shield", 14, new[] { (Stat.Block, 15), (Stat.ArmourPct, 80), (Stat.AllRes, 25) }),
+        ("Warden's Crown", "great-helm", 15, new[] { (Stat.Armour, 40), (Stat.AllRes, 20), (Stat.Skills, 1) }),
+        ("Pyreglass", "rune-staff", 15, new[] { (Stat.SpellDmg, 90), (Stat.Skills, 2), (Stat.Mana, 60) }),
+        ("Soot and Sorrow", "bastard-sword", 16, new[] { (Stat.DmgPct, 120), (Stat.FireDmg, 30), (Stat.LifeSteal, 6) }),
+        ("The Last Ember", "war-bow", 17, new[] { (Stat.DmgPct, 110), (Stat.FireDmg, 25), (Stat.Crit, 10), (Stat.AttackSpeed, 20) }),
     };
 
     /// <summary>Two-word names for rare items: a first word and a second one that fits the kind.</summary>

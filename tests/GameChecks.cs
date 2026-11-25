@@ -122,7 +122,7 @@ public partial class SelfCheck
         Check(w.Learn("cleave") == null && w.Rank("cleave") == 1 && w.SkillPoints == 0, "and is learned at level 2 with a point");
         w.AttrPoints = 1;
         double life = w.S.MaxLife;
-        Check(w.Raise("vigour") == null && w.S.MaxLife == life + 4, "a point of vigour is four of life");
+        Check(w.Raise("vigour") == null && Math.Abs(w.S.MaxLife - (life + 4 * 1.2)) < 1e-6, "a point of vigour is four of life (the wanderer's a fifth more)");
         // A two-handed bow puts the buckler away; the buckler back puts the bow away.
         w.Pack[0] = new Item("short-bow");
         Check(w.EquipFromPack(0) == null && w.Weapon.Base == "short-bow" && w.Equip[(int)Slot.Shield] == null, "a bow takes both hands");
@@ -261,6 +261,11 @@ public partial class SelfCheck
         Check(g.SmithWares.Count >= 12, "and sells it on");
         g.Hero.Pack[0] = new Item("hatchet");
         Check(g.ToStash(0) == null && g.Hero.Stash.Count == 1 && g.FromStash(0) == null && g.Hero.Stash.Count == 0, "the stash keeps things");
+        for (int k = 0; k < Game.StashSize + 2; k++) { g.Hero.Pack[0] = new Item("hatchet"); g.ToStash(0); }
+        Check(g.Hero.Stash.Count == Game.StashSize && g.Hero.Pack[0] != null, $"up to {Game.StashSize} things, all of them shown");
+        g.Hero.Stash.Clear();
+        for (int k = 0; k < 40; k++) { g.Hero.Pack[1] = Loot.Make("hatchet", Rarity.Magic, 3, new Rng((ulong)k)); g.Sell(1); }
+        Check(g.SmithWares.Count <= 24, $"the smith keeps no more than two dozen wares ({g.SmithWares.Count})");
 
         // Down, the scroll home, and back through its way.
         g.Use(g.Map.Find("down"));
@@ -294,6 +299,12 @@ public partial class SelfCheck
         Check(g.Map.Walk(barrel.X, barrel.Y), "its cell is open now");
         g.Enter(0, null); g.Enter(2, null);
         Check(g.Map.Walk(barrel.X, barrel.Y) && g.Map.Props.First(p => p.Id == barrel.Id).Kind == "barrel", "and stays broken when the floor is made again");
+        // Told to walk onto something in the way, the hero stops beside it (not walking on the spot for ever).
+        Prop block = g.Map.Props.First(p => p.Blocks && p.Kind == "deco");
+        g.Me.X = g.Map.Start.x + 0.5; g.Me.Y = g.Map.Start.y + 0.5;
+        g.OrderMove(block.X + 0.5, block.Y + 0.5);
+        Run(g, 20);
+        Check(g.Order.Kind == "none" && g.Me.Act == "idle" && Game.Dist(g.Me.X, g.Me.Y, block.X + 0.5, block.Y + 0.5) < 2.2, $"walking onto a {block.Model} ends beside it ({g.Order.Kind}, {g.Me.Act})");
         // A chest opens once; a tomb is only to look at.
         Prop chest = g.Map.Props.First(p => p.Kind == "chest");
         g.Use(chest);
@@ -302,6 +313,113 @@ public partial class SelfCheck
         Check(g.Here.Opened.Contains(chest.Id) && g.Here.Drops.Count == drops, "a chest opens once");
         Check(Floor.Make(3, 2).Props.Any(p => p.Kind is "urn" or "barrel") && Floor.Make(3, 4).Props.Any(p => p.Model is "bone-pile" or "candelabra" or "gibbet-cage"), "floors have things to break and things to look at");
         Check(Floor.Make(3, 1).Props.Where(p => p.Model is "tomb" or "pillar" or "gravestone" or "bone-pile").All(p => !p.Usable), "tombs, pillars, gravestones and bones are only to look at");
+    }
+
+    [Section]
+    private void ShrinesAndChampions()
+    {
+        // A shrine blesses once, for a while.
+        Game g = null;
+        Prop shrine = null;
+        for (ulong seed = 1; seed < 30 && shrine == null; seed++)
+        {
+            g = Game.New(seed, Cls.Wanderer);
+            g.Enter(2, null);
+            shrine = g.Map.Props.FirstOrDefault(p => p.Kind == "shrine");
+        }
+        Check(shrine != null && shrine.Usable, "floors have shrines");
+        g.Me.Life = 1;
+        g.Use(shrine);
+        Check(g.Here.Opened.Contains(shrine.Id) && (g.Hero.BlessingLeft > 0 || g.Me.Life == g.Me.MaxLife), "a shrine blesses (or mends)");
+        string had = g.Hero.Blessing;
+        g.Use(shrine);
+        Check(g.Hero.Blessing == had, "once");
+        g.Hero.Blessing = "iron"; g.Hero.BlessingLeft = 1; g.Hero.Changed();
+        double armour = g.Hero.S.Armour;
+        g.Here.Actors.Clear();
+        for (int k = 0; k < 40; k++) g.Step(0.05);
+        Check(g.Hero.BlessingLeft <= 0 && g.Hero.S.Armour < armour, "and the blessing fades");
+        // Champions carry traits that change the fight.
+        Actor c = g.MakeMonster("hollow", g.Me.X + 1, g.Me.Y, 3, true, null, 7);
+        Actor c2 = g.MakeMonster("hollow", g.Me.X + 2, g.Me.Y, 3, true, null, 7);
+        Check(c.Traits.Count is 1 or 2 && c.Traits.SequenceEqual(c2.Traits), $"a champion pack shares its traits ({string.Join(",", c.Traits)})");
+        var stone = g.MakeMonster("hollow", 0, 0, 3);
+        stone.Traits.Add("stone"); stone.MaxLife = stone.Life = 1000;
+        var plain = g.MakeMonster("hollow", 0, 0, 3);
+        plain.MaxLife = plain.Life = 1000;
+        g.Here.Actors.Add(stone); g.Here.Actors.Add(plain);
+        var hurt = typeof(Game).GetMethod("HurtFoe", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        hurt.Invoke(g, new object[] { stone, 100.0, Elem.Phys, false, 0.0 });
+        hurt.Invoke(g, new object[] { plain, 100.0, Elem.Phys, false, 0.0 });
+        Check(stone.Life > plain.Life + 30, "a stone-skinned one shrugs off a blow");
+    }
+
+    [Section]
+    private void UniquesAndRespec()
+    {
+        Check(Data.UniqueItems.All(u => Data.BaseOf(u.baseId)?.Wearable == true && u.level >= Data.BaseOf(u.baseId).Level), "every unique has a base it can be");
+        Item u0 = Loot.Unique(0);
+        Check(u0.Rarity == Rarity.Unique && u0.Name == "Graveward" && u0.Mods.Count == 4 && u0.Requires == 3, "a unique: its name, its affixes, its level");
+        var r = new Rng(5);
+        int uniques = 0;
+        for (int k = 0; k < 4000; k++) uniques += Loot.Drop(20, 10, 0, 0, r).Count(i => i.Rarity == Rarity.Unique);
+        Check(uniques > 10, $"bosses drop uniques now and then ({uniques} in 4000)");
+        int fromPlain = 0;
+        for (int k = 0; k < 4000; k++) fromPlain += Loot.Drop(20, 1, 0, 0, r).Count(i => i.Rarity == Rarity.Unique);
+        Check(fromPlain < uniques, $"and plain monsters far less ({fromPlain})");
+        // The elder unlearns every point: free once, then for gold.
+        Game g = Game.New(3, Cls.Rogue, true, "Wenna");
+        Check(g.Hero.Name == "Wenna" && g.Hero.Female, "a named hero");
+        g.GainXp(Data.XpToNext(1) + Data.XpToNext(2) + Data.XpToNext(3));
+        g.Hero.Raise("agility"); g.Hero.Raise("agility"); g.Hero.Learn("multi");
+        int attrs = g.Hero.AttrPoints, skills = g.Hero.SkillPoints;
+        Check(g.Hero.Respec() == null && g.Hero.AttrPoints == attrs + 2 && g.Hero.SkillPoints == skills + 1 && g.Hero.Rank("multi") == 0 && g.Hero.Rank("power") == 1, "unlearning gives every point back");
+        g.Hero.Gold = 0;
+        Check(g.Hero.Respec() != null, "the second time costs gold");
+    }
+
+    [Section]
+    private void Comforts()
+    {
+        Game g = Bare(Cls.Rogue, 1);
+        g.Place(new Item("gold", 25), g.Me.X + 2, g.Me.Y);
+        Drop gold = g.Here.Drops[0];
+        int had = g.Hero.Gold;
+        g.OrderMove(gold.X, gold.Y);
+        Run(g, 3);
+        Check(g.Hero.Gold == had + 25 && g.Here.Drops.Count == 0, "gold is picked up by walking over it");
+        g.Hero.Belt[0] = new Item("pot-hp");
+        g.Hero.Pack[5] = new Item("pot-hp", 3);
+        g.Me.Life = 1;
+        g.UseBelt(0);
+        Check(g.Hero.Belt[0]?.Count == 3 && g.Hero.Pack[5] == null, "an emptied belt place refills from the pack");
+    }
+
+    [Section]
+    private void Restocking()
+    {
+        Game g = Game.New(8, Cls.Wanderer);
+        g.Enter(1, null);
+        int full = g.Foes.Count(a => a.Alive);
+        foreach (Actor a in g.Foes) { a.Life = 0; a.Act = "dead"; }
+        Prop chest = g.Map.Props.FirstOrDefault(p => p.Kind == "chest");
+        if (chest != null) g.Use(chest);
+        g.Enter(0, null);
+        g.Step(30);
+        g.Enter(1, null);
+        Check(!g.Foes.Any(a => a.Alive), "back soon after: the floor is as it was left");
+        g.Enter(0, null);
+        g.Time += Game.RestockAfter;
+        g.Enter(1, null);
+        Check(g.Foes.Count(a => a.Alive) == full && (chest == null || !g.Here.Opened.Contains(chest.Id)), $"back after ten minutes: monsters and chests again ({full})");
+        Check(g.Here.Seen.Any(b => b == 1), "and the map of it is kept");
+        foreach (Actor a in g.Foes) { a.Life = 0; a.Act = "dead"; }
+        g.Enter(2, null);
+        Game back = Saves.Read<Game>(Saves.Write(g));
+        back.Restock();
+        Check(back.Depth == 2 && back.Foes.Any(a => a.Alive), "a loaded game keeps the floor the hero stands on");
+        back.Enter(1, null);
+        Check(back.Foes.Count(a => a.Alive) == full, "and fills the others up again");
     }
 
     [Section]

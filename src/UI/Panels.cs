@@ -214,7 +214,7 @@ public partial class CharacterPanel : GamePanel
     {
         Hero h = G.Hero;
         Stats st = h.S;
-        Body.AddChild(Line($"Level {h.Level} {h.Class}", UITheme.Accent, 18));
+        Body.AddChild(Line(h.Name == h.Class.ToString() ? $"Level {h.Level} {h.Class}" : $"{h.Name}, level {h.Level} {h.Class}", UITheme.Accent, 18));
         Body.AddChild(Line(h.Level >= Data.MaxLevel ? "The highest level." : $"Experience {h.Xp} / {Data.XpToNext(h.Level)}", UITheme.Dim, 14));
         Body.AddChild(Line(h.AttrPoints > 0 ? $"{h.AttrPoints} points to spend" : "No points to spend", h.AttrPoints > 0 ? UITheme.Good : UITheme.Faint, 15));
         foreach (var (name, val, about) in new[]
@@ -334,10 +334,10 @@ public partial class StashPanel : GamePanel
     public StashPanel(GameScreen s) : base(s, "Stash", "left")
     {
         Body.AddChild(Line("What you leave here waits for you. Click to take it back.", UITheme.Dim, 14));
-        var grid = new GridContainer { Columns = 7 };
+        var grid = new GridContainer { Columns = 6 };
         grid.AddThemeConstantOverride("h_separation", 3);
         grid.AddThemeConstantOverride("v_separation", 3);
-        for (int k = 0; k < 42; k++)
+        for (int k = 0; k < Game.StashSize; k++)
         {
             int i = k;
             grid.AddChild(new ItemSlot
@@ -371,6 +371,20 @@ public partial class TalkPanel : GamePanel
                 s.Open("right", "inventory");
             }));
         }
+        if (s.TalkingTo == "elder")
+        {
+            // The elder can unlearn the hero's points: free once, then for gold.
+            Hero h = G.Hero;
+            string cost = h.RespecCost == 0 ? "free, once" : $"{h.RespecCost} gold";
+            row.AddChild(UITheme.B($"Unlearn every point ({cost})", () =>
+            {
+                string why = h.Respec();
+                s.TalkText = why == null ? "Sit. Breathe. Forget what the deep taught you, and choose again." : $"Not today: {why}.";
+                if (why == null) { Sounds.Play("waystone", 0.6f); s.Say("Every point is yours to spend again.", UITheme.Accent); }
+                s.Refresh();
+                s.Open("centre", "talk");
+            }, 15));
+        }
         row.AddChild(UITheme.B("Farewell", () => s.Open("centre", "")));
         Body.AddChild(row);
         GetChild<VBoxContainer>(0).GetChild<ScrollContainer>(1).CustomMinimumSize = new Vector2(0, 170);
@@ -399,6 +413,51 @@ public partial class WaystonePanel : GamePanel
         }
         Body.AddChild(grid);
         GetChild<VBoxContainer>(0).GetChild<ScrollContainer>(1).CustomMinimumSize = new Vector2(0, 260);
+    }
+}
+
+/// <summary>The in-game menu (Esc, the back button): the game waits while it is open.</summary>
+public partial class MenuPanel : GamePanel
+{
+    public MenuPanel() { }
+
+    public MenuPanel(GameScreen s) : base(s, "Paused", "centre")
+    {
+        CustomMinimumSize = new Vector2(440, 0);
+        Body.AddChild(UITheme.Flat("Resume", () => s.Open("centre", ""), 26, UITheme.Ember, UITheme.Title));
+        Body.AddChild(new HSeparator());
+        Body.AddChild(Slider("Sound", Profile.Current.Sound, Profile.Current.Volume, (on, v) => { Profile.Current.Sound = on; Profile.Current.Volume = v; Profile.Current.Apply(); }));
+        Body.AddChild(Slider("Music", Profile.Current.MusicOn, Profile.Current.MusicVolume, (on, v) => { Profile.Current.MusicOn = on; Profile.Current.MusicVolume = v; Sounds.ApplyMusic(); }));
+        if (!GameScreen.Touch)
+        {
+            var full = new CheckBox { Text = "Full screen (F11)", ButtonPressed = Profile.Current.Fullscreen, FocusMode = FocusModeEnum.None };
+            full.Toggled += on => { Profile.Current.Fullscreen = on; Profile.Current.Apply(); Profile.Current.Save(); };
+            Body.AddChild(full);
+        }
+        Body.AddChild(new HSeparator());
+        Body.AddChild(Line(GameScreen.Touch
+            ? "Tap to walk, fight, pick up and use. Tap the right-hand skill icon to make taps use that skill. Back closes panels."
+            : "Left click: walk, fight, pick up, use, talk (hold to keep walking). Right click: your skill (hold to repeat). Shift: fight where you stand. Q W E R T: choose a skill. 1-4: the belt. I C S: pack, character, skills. Tab: the map.",
+            UITheme.Dim, 14));
+        Body.GetChild<Label>(Body.GetChildCount() - 1).AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        Body.AddChild(new HSeparator());
+        var row = UITheme.H(24);
+        row.AddChild(UITheme.Flat("Save and go to the title", () => Root.Instance.ShowTitle(), 19, UITheme.Bone));
+        row.AddChild(UITheme.Flat("Quit", () => { s.Autosave(); GetTree().Quit(); }, 19, UITheme.Ash));
+        Body.AddChild(row);
+        GetChild<VBoxContainer>(0).GetChild<ScrollContainer>(1).CustomMinimumSize = new Vector2(0, 330);
+    }
+
+    private static Control Slider(string name, bool on, float volume, System.Action<bool, float> set)
+    {
+        var row = UITheme.H(12);
+        var cb = new CheckBox { Text = name, ButtonPressed = on, FocusMode = FocusModeEnum.None, CustomMinimumSize = new Vector2(110, 0) };
+        var sl = new HSlider { MinValue = 0, MaxValue = 1, Step = 0.05, Value = volume, CustomMinimumSize = new Vector2(220, 24), SizeFlagsVertical = SizeFlags.ShrinkCenter };
+        cb.Toggled += v => { set(v, (float)sl.Value); Profile.Current.Save(); };
+        sl.ValueChanged += v => { set(cb.ButtonPressed, (float)v); Profile.Current.Save(); };
+        row.AddChild(cb);
+        row.AddChild(sl);
+        return row;
     }
 }
 

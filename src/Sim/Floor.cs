@@ -17,10 +17,10 @@ public sealed class Prop
     public string Kind = "deco";
 
     /// <summary>Can the hero use it (it lights up under the cursor), as against a thing only to look at?</summary>
-    public bool Usable => Kind is "chest" or "crate" or "barrel" or "urn" or "waystone" or "down" or "up" or "stash" or "well";
+    public bool Usable => Kind is "chest" or "crate" or "barrel" or "urn" or "shrine" or "waystone" or "down" or "up" or "stash" or "well";
 
-    /// <summary>Used once and then spent: opened (chest, crate) or broken (barrel, urn).</summary>
-    public bool OneUse => Kind is "chest" or "crate" or "barrel" or "urn";
+    /// <summary>Used once and then spent: opened (chest, crate), broken (barrel, urn), drawn on (shrine).</summary>
+    public bool OneUse => Kind is "chest" or "crate" or "barrel" or "urn" or "shrine";
 
     /// <summary>Broken into pieces when used (the cell it stood on opens up).</summary>
     public bool Breaks => Kind is "barrel" or "urn";
@@ -28,7 +28,7 @@ public sealed class Prop
     /// <summary>Its name under the cursor.</summary>
     public string Title => Kind switch
     {
-        "chest" => "Chest", "crate" => "Crate", "barrel" => "Barrel", "urn" => "Burial urn", "waystone" => "Waystone",
+        "chest" => "Chest", "crate" => "Crate", "shrine" => "Shrine", "barrel" => "Barrel", "urn" => "Burial urn", "waystone" => "Waystone",
         "down" => "The way down", "up" => "The way up", "stash" => "Your stash", "well" => "Well", _ => Model,
     };
     public int X, Y;
@@ -231,6 +231,16 @@ public sealed class Floor
         f.Add(null, "down", far.CX - 1, far.CY - 1, false, 2, 0, 2, 2);
         f.Add("waystone", "waystone", start.X + 1, start.Y + 1, true, 2.2, 0, 2, 2);
         f.Furnish(theme, r, start, far);
+        // A shrine on most floors, in a room of its own choosing (not the first).
+        if (r.Chance(0.75))
+            for (int tries = 0; tries < 40; tries++)
+            {
+                Room room = f.Rooms[r.Int(1, f.Rooms.Count)];
+                int x = room.X + r.Int(1, Math.Max(2, room.W - 2)), y = room.Y + r.Int(1, Math.Max(2, room.H - 2));
+                if (!f.Clear(x, y, 1, 1)) continue;
+                f.Add("shrine", "shrine", x, y, true, 1.6, FacingView(r));
+                break;
+            }
         f.KeepConnected(f.Start);
         f.Populate(r, start, far);
         return f;
@@ -509,7 +519,8 @@ public sealed class Floor
 
     /// <summary>
     /// A* over the cells, eight ways (no cutting corners), from one point to the nearest reachable cell to another.
-    /// Returns cell centres to walk through, the first step first; empty when already there or no way at all.
+    /// Returns cell centres to walk through, the first step first; empty when already there or no way at all. A goal
+    /// that cannot be stood on (a barrel's cell, a pillar's) ends at the nearest open cell beside it.
     /// </summary>
     public List<(double x, double y)> Path(double fx, double fy, double tx, double ty, int budget = 6000)
     {
@@ -534,7 +545,7 @@ public sealed class Floor
             foreach (var (dx, dy, step) in Steps8)
             {
                 int nx = x + dx, ny = y + dy;
-                if (!Walk(nx, ny) && (nx != gx || ny != gy || !Floor_(nx, ny))) continue;
+                if (!Walk(nx, ny)) continue;
                 if (dx != 0 && dy != 0 && (!Walk(x + dx, y) || !Walk(x, y + dy))) continue;
                 int n = ny * W + nx;
                 double nc = cost[c] + step;

@@ -31,8 +31,9 @@ public sealed class Item
 
     public int Get(Stat s) { int v = 0; foreach (Mod m in Mods) if (m.Stat == s) v += m.Value; return v; }
 
-    /// <summary>The level the hero needs to wear it.</summary>
-    public int Requires => B == null ? 1 : Math.Max(B.Level, Rarity switch { Rarity.Rare => Level - 3, Rarity.Magic => Level - 6, _ => 0 });
+    /// <summary>The level the hero needs to wear it (a unique: its own).</summary>
+    public int Requires => B == null ? 1 : Rarity == Rarity.Unique ? Math.Max(B.Level, Level)
+        : Math.Max(B.Level, Rarity switch { Rarity.Rare => Level - 3, Rarity.Magic => Level - 6, _ => 0 });
 
     /// <summary>Its armour with its own affixes counted (the hero's other bonuses come on top).</summary>
     public int Armour => B == null ? 0 : (int)Math.Round((B.Armour + Get(Stat.Armour)) * (1 + Get(Stat.ArmourPct) / 100.0));
@@ -116,6 +117,25 @@ public static class Loot
         return it;
     }
 
+    /// <summary>A unique item from the table (its name, its base, its fixed affixes).</summary>
+    public static Item Unique(int index)
+    {
+        var u = Data.UniqueItems[index];
+        var it = new Item(u.baseId) { Rarity = Rarity.Unique, Level = u.level, Name = u.name };
+        foreach (var (stat, value) in u.mods) it.Mods.Add(new Mod(stat, value));
+        return it;
+    }
+
+    /// <summary>A unique that can drop at a level (one no higher than the level, the newer ones more often), or null.</summary>
+    public static Item RollUnique(int level, Rng r)
+    {
+        var can = Enumerable.Range(0, Data.UniqueItems.Length).Where(i => Data.UniqueItems[i].level <= level + 2).ToList();
+        if (can.Count == 0) return null;
+        double total = can.Sum(i => 1.0 + Data.UniqueItems[i].level / 5.0), x = r.Float() * total;
+        foreach (int i in can) { x -= 1.0 + Data.UniqueItems[i].level / 5.0; if (x <= 0) return Unique(i); }
+        return Unique(can[^1]);
+    }
+
     /// <summary>A base fit for a level: one the level could wear, the newer ones more often.</summary>
     public static Base PickBase(int level, Rng r, Func<Base, bool> filter = null)
     {
@@ -144,7 +164,13 @@ public static class Loot
             if (x < 0.35) got.Add(new Item("gold", Math.Max(1, (int)((r.Int(3, 12) + level * r.Int(2, 6)) * (1 + goldFind / 100.0)))));
             else if (x < 0.55) got.Add(new Item(r.Chance(0.6) ? "pot-hp" : "pot-mp"));
             else if (x < 0.6) got.Add(new Item("scroll"));
-            else got.Add(Make(PickBase(level, r).Id, RollRarity(quality, magicFind, r), level, r));
+            else
+            {
+                Rarity rarity = RollRarity(quality, magicFind, r);
+                // Now and then a rare roll is a unique instead (more often from champions and the named foes).
+                Item u = rarity == Rarity.Rare && r.Chance(Math.Min(0.6, 0.12 * Math.Sqrt(quality))) ? RollUnique(level, r) : null;
+                got.Add(u ?? Make(PickBase(level, r).Id, rarity, level, r));
+            }
         }
         return got;
     }

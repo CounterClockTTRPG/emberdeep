@@ -27,6 +27,9 @@ public sealed class Actor
     // Monsters.
     public bool Awake, Champion;
     public string Title;
+    /// <summary>A champion's traits (Data.Traits ids), shared by its pack.</summary>
+    public List<string> Traits = new();
+    public bool Has(string trait) => Traits.Contains(trait);
     public int Pack;
     public double Think, DmgX = 1, Accuracy, Defense;
     public int Resist;
@@ -100,6 +103,8 @@ public sealed class FloorState
     public HashSet<int> Opened = new();
     /// <summary>Cells seen, for the map (one byte a cell).</summary>
     public byte[] Seen;
+    /// <summary>When the hero last left it (game time); a floor left long enough fills up again.</summary>
+    public double LeftAt = -1;
 }
 
 /// <summary>What the hero was told to do: walk somewhere, fight someone, use a skill, pick up, use, talk.</summary>
@@ -120,6 +125,8 @@ public sealed class Order
 public sealed partial class Game
 {
     public const double Tick = 1.0 / 30;
+    /// <summary>What the stash holds (the panel shows every place).</summary>
+    public const int StashSize = 60;
 
     public ulong Seed;
     public double Time;
@@ -163,9 +170,9 @@ public sealed partial class Game
     /// <summary>The way back in the village, beside the waystone.</summary>
     public static (double x, double y) PortalSpot => (Floor.VillageSize / 2 + 3.5, Floor.VillageSize / 2 + 1.5);
 
-    public static Game New(ulong seed, Cls cls = Cls.Wanderer, bool female = false)
+    public static Game New(ulong seed, Cls cls = Cls.Wanderer, bool female = false, string name = null)
     {
-        var g = new Game { Seed = seed, Hero = Hero.New(cls, female) };
+        var g = new Game { Seed = seed, Hero = Hero.New(cls, female, name) };
         g.Me = new Actor { Id = 0, Def = "hero", Hero = true };
         g.Hero.Changed();
         g.Me.MaxLife = g.Me.Life = g.Hero.S.MaxLife;
@@ -180,10 +187,23 @@ public sealed partial class Game
 
     // ---- floors -----------------------------------------------------------------------------------------------------
 
+    /// <summary>How long a floor must be left (seconds of play) before its monsters, chests and barrels come back.</summary>
+    public const double RestockAfter = 600;
+
     /// <summary>Go to a floor, arriving at a place (null: where the floor's arrivals arrive).</summary>
     public void Enter(int depth, (double x, double y)? at)
     {
+        if (Floors.TryGetValue(Depth, out FloorState leaving)) leaving.LeftAt = Time;
         Depth = Math.Clamp(depth, 0, Data.Bottom);
+        // A floor left for long enough fills up again (what was seen of it stays on the map).
+        if (Depth > 0 && Floors.TryGetValue(Depth, out FloorState old) && old.LeftAt >= 0 && Time - old.LeftAt >= RestockAfter)
+        {
+            Floors.Remove(Depth);
+            _map = null;
+            Floors[Depth] = Populate(Map);
+            Floors[Depth].Seen = old.Seen;
+            Emit(new Ev { Kind = "restock", V = Depth });
+        }
         Floor f = Map;
         if (!Floors.ContainsKey(Depth)) Floors[Depth] = Populate(f);
         FloorState st = Here;
@@ -213,6 +233,16 @@ public sealed partial class Game
         return st;
     }
 
+    /// <summary>
+    /// A saved game taken up again: every floor but the one the hero stands on fills up again when next entered, as
+    /// the deep does between visits (the quests stay as they are).
+    /// </summary>
+    public void Restock()
+    {
+        foreach (var (depth, st) in Floors)
+            if (depth != Depth && depth > 0) st.LeftAt = Time - RestockAfter;
+    }
+
     public Actor MakeMonster(string id, double x, double y, int depth, bool champion = false, string unique = null, int pack = 0)
     {
         MonDef m = Data.Mon(id);
@@ -220,11 +250,20 @@ public sealed partial class Game
         double life = m.Life * (1 + 0.2 * (lvl - 1)), dmg = 0.8 * (1 + 0.1 * (lvl - 1));
         var u = Data.Uniques.FirstOrDefault(q => q.title == unique);
         if (champion) { life *= 2.5; dmg *= 1.3; }
+        // A champion pack shares one or two traits, rolled from the seed, the floor and the pack.
+        var traits = new List<string>();
+        if (champion)
+        {
+            var tr = new Rng(Seed ^ ((ulong)depth << 20) ^ (ulong)pack * 2654435761UL);
+            int n = tr.Chance(0.45) ? 2 : 1;
+            while (traits.Count < n) { string t = Data.Traits[tr.Int(0, Data.Traits.Length)].id; if (!traits.Contains(t)) traits.Add(t); }
+            if (traits.Contains("mighty")) dmg *= 1.35;
+        }
         if (unique != null) { life *= u.lifeX; dmg *= u.dmgX; }
         var a = new Actor
         {
             Id = NextId++, Def = id, Level = lvl, X = x, Y = y, MaxLife = Math.Round(life), Life = Math.Round(life), DmgX = dmg,
-            Champion = champion, Title = unique ?? (champion ? $"{m.Name} Champion" : null), Pack = pack,
+            Champion = champion, Title = unique ?? (champion ? $"{m.Name} Champion" : null), Pack = pack, Traits = traits,
             Accuracy = 10 + 9 * lvl, Defense = m.Armour + 5 * lvl, Resist = m.Resist, Facing = R().Float() * Math.Tau,
         };
                 return a;
@@ -257,7 +296,15 @@ public sealed partial class Game
             if (Depth == 0) { Me.Life = Math.Min(Me.MaxLife, Me.Life + Me.MaxLife * 0.05 * dt); }
         }
         Timers(Me, dt);
+        if (Hero.BlessingLeft > 0)
+        {
+            Hero.BlessingLeft -= dt;
+            if (Hero.BlessingLeft <= 0) { Hero.Changed(); Emit(new Ev { Kind = "blessing-end", Text = Hero.Blessing }); }
+        }
         HeroThink(dt);
+        // Gold is picked up just by walking over it.
+        if (Me.Alive)
+            foreach (Drop d in st.Drops.Where(d => d.Item.Base == "gold" && Dist(d.X, d.Y, Me.X, Me.Y) < 0.7).ToList()) Pick(d);
         Act(Me, dt);
         foreach (Actor a in st.Actors.ToList())
         {
@@ -308,7 +355,7 @@ public sealed partial class Game
     // ---- moving -----------------------------------------------------------------------------------------------------
 
     private double Speed(Actor a) =>
-        (a.Hero ? Hero.S.MoveSpeed : a.M?.Speed ?? 2) * (a.Slow > 0 ? 0.5 : 1) * (a.Champion ? 1.15 : 1);
+        (a.Hero ? Hero.S.MoveSpeed : a.M?.Speed ?? 2) * (a.Slow > 0 ? 0.5 : 1) * (a.Champion ? 1.15 : 1) * (a.Has("swift") ? 1.5 : 1);
 
     /// <summary>Walk an actor toward a point along a path (found again now and then), at its speed. True when there.</summary>
     private bool WalkTo(Actor a, double tx, double ty, double within, double dt)
@@ -607,7 +654,7 @@ public sealed partial class Game
         else
         {
             MonDef m = a.M;
-            dur = skill == "volley" ? 1.2 : m.AttackTime * 1.25 / (a.Slow > 0 ? 0.6 : 1);
+            dur = skill == "volley" ? 1.2 : m.AttackTime * 1.25 / (a.Slow > 0 ? 0.6 : 1) / (a.Has("swift") ? 1.6 : 1);
             act = m.Ai == Ai.Caster || skill == "volley" ? "cast" : "attack";
             at = m.Ai == Ai.Charger ? 0.6 : 0.5;
         }
@@ -915,7 +962,15 @@ public sealed partial class Game
         }
         double reach = a.Radius + Me.Radius + m.Range * 0.6 + 0.6;
         if (!Me.Alive || Dist(a, Me) > reach) return;
+        double before = Me.Life;
         HurtHero(a, dmg, m.Elem, a.Accuracy, true);
+        if (Me.Life < before)
+        {
+            // A champion's traits on a blow that landed.
+            if (a.Has("fire")) HurtHero(a, dmg * 0.35, Elem.Fire, 0, true);
+            if (a.Has("frost")) Me.Slow = Math.Max(Me.Slow, 2.5);
+            if (a.Has("vampiric")) a.Life = Math.Min(a.MaxLife, a.Life + (before - Me.Life));
+        }
         if (m.Ai == Ai.Charger && Me.Alive)
         {
             double dx = Me.X - a.X, dy = Me.Y - a.Y, len = Math.Max(0.01, Math.Sqrt(dx * dx + dy * dy));
@@ -929,7 +984,7 @@ public sealed partial class Game
     private double HurtFoe(Actor t, double amount, Elem e, bool crit, double slow)
     {
         if (!t.Alive) return 0;
-        double res = e == Elem.Phys ? 0 : t.Resist / 100.0;
+        double res = e == Elem.Phys ? (t.Has("stone") ? 0.4 : 0) : t.Resist / 100.0;
         double dmg = Math.Max(1, Math.Round(amount * (1 - res)));
         t.Life -= dmg;
         if (slow > 0) t.Slow = Math.Max(t.Slow, slow);
@@ -983,11 +1038,17 @@ public sealed partial class Game
         t.DeadT = 0;
         t.Path.Clear();
         Emit(new Ev { Kind = "die", A = t.Id, X = t.X, Y = t.Y, Text = t.Name });
+        if (t.Has("fire"))
+        {
+            // A fire-touched champion bursts into flame as it falls: stand clear.
+            Here.Zones.Add(new Zone { Id = NextId++, Kind = "burst", X = t.X, Y = t.Y, R = 2.2, Delay = 0.35, Dmg = t.DmgX * (t.M?.DMax ?? 5) * 0.7, Elem = Elem.Fire, FromHero = false });
+        }
         Hero.Kills++;
         MonDef m = t.M;
         double xp = 4 * m.Xp * (1 + 0.3 * (t.Level - 1)) * (t.Champion ? 3 : 1) * (t.Title != null && !t.Champion ? 4 : 1);
         // Little for monsters far below the hero.
         if (Hero.Level > t.Level + 5) xp *= Math.Max(0.1, 1 - (Hero.Level - t.Level - 5) * 0.15);
+        if (Hero.BlessingLeft > 0 && Hero.Blessing == "wisdom") xp *= 1.5;
         GainXp((long)Math.Round(xp));
         double quality = m.Ai == Ai.Boss ? 10 : t.Title != null && !t.Champion ? 7 : t.Champion ? 2.5 : 1;
         foreach (Item it in Loot.Drop(t.Level, quality, Hero.S.MagicFind, Hero.S.GoldFind, R())) Place(it, t.X, t.Y);
@@ -1102,7 +1163,7 @@ public sealed partial class Game
             {
                 z.Delay -= dt;
                 if (z.Delay > 0) continue;
-                if (z.Kind == "meteor")
+                if (z.Kind is "meteor" or "burst")
                 {
                     Emit(new Ev { Kind = "blast", X = z.X, Y = z.Y, V = (int)z.R, E = Elem.Fire });
                     ZoneHit(z, z.Dmg);
@@ -1216,6 +1277,16 @@ public sealed partial class Game
             case "stash":
                 Emit(new Ev { Kind = "stash" });
                 break;
+            case "shrine":
+            {
+                if (Here.Opened.Contains(p.Id)) return;
+                Here.Opened.Add(p.Id);
+                var sh = Data.Shrines[new Rng(Seed ^ (ulong)(p.Id * 7919 + Depth * 104729)).Int(0, Data.Shrines.Length)];
+                if (sh.seconds > 0) { Hero.Blessing = sh.id; Hero.BlessingLeft = sh.seconds; Hero.Changed(); }
+                else { Me.Life = Hero.S.MaxLife; Me.Mana = Hero.S.MaxMana; }
+                Emit(new Ev { Kind = "shrine", A = p.Id, X = p.X + 0.5, Y = p.Y + 0.5, Text = $"{sh.name}: {sh.about}" });
+                break;
+            }
             case "well":
                 Emit(new Ev { Kind = "say", Text = "The water is black and very cold. Something far below breathes warm air up the shaft." });
                 break;
@@ -1238,7 +1309,13 @@ public sealed partial class Game
         Item it = k >= 0 && k < 4 ? Hero.Belt[k] : null;
         if (it == null) return "nothing there";
         string why = Consume(it);
-        if (why == null && --it.Count <= 0) Hero.Belt[k] = null;
+        if (why == null && --it.Count <= 0)
+        {
+            // An empty belt place takes the same draught from the pack, if there is one.
+            int more = Array.FindIndex(Hero.Pack, p => p?.Base == it.Base);
+            Hero.Belt[k] = more >= 0 ? Hero.Pack[more] : null;
+            if (more >= 0) Hero.Pack[more] = null;
+        }
         return why;
     }
 
@@ -1318,7 +1395,12 @@ public sealed partial class Game
         if (it == null) return "nothing there";
         Hero.Gold += it.Worth;
         Hero.Pack[place] = null;
-        if (it.B.Wearable && it.Rarity >= Rarity.Magic) SmithWares.Add(it);
+        if (it.B.Wearable && it.Rarity >= Rarity.Magic)
+        {
+            // Oskar sells on what he buys, but keeps no more than two dozen things: the oldest go.
+            SmithWares.Add(it);
+            while (SmithWares.Count > 24) SmithWares.RemoveAt(0);
+        }
         Emit(new Ev { Kind = "gold", V = it.Worth, Text = $"Sold {it.Title}" });
         return null;
     }
@@ -1354,7 +1436,7 @@ public sealed partial class Game
     {
         Item it = place >= 0 && place < Hero.Pack.Length ? Hero.Pack[place] : null;
         if (it == null) return "nothing there";
-        if (Hero.Stash.Count >= 60) return "the stash is full";
+        if (Hero.Stash.Count >= StashSize) return "the stash is full";
         Hero.Stash.Add(it);
         Hero.Pack[place] = null;
         return null;
